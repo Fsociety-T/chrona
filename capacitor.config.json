@@ -1,0 +1,12 @@
+{
+  "appId": "app.chrona.tracker",
+  "appName": "Chrona",
+  "webDir": "www",
+  "android": {
+    "allowMixedContent": false,
+    "backgroundColor": "#0b0d14"
+  },
+  "server": {
+    "androidScheme": "https"
+  }
+}
