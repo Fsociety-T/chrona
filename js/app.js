@@ -66,23 +66,32 @@
       b.addEventListener('click', function () { show(b.dataset.nav); });
     });
 
-    // main start/stop
-    $('#btnStartStop').addEventListener('click', function () {
-      if (S.state.running) {
-        S.stop().then(function (entry) {
-          UI.toast(entry ? 'Logged ' + UI.fmtDuration(entry.end - entry.start) : 'Too short — discarded');
-        });
+    /* The primary button always does whatever moves the session on:
+       start it, pause it, or pick it back up. */
+    function primaryAction() {
+      if (!S.state.running) { Views.openStartPicker(); return; }
+      if (S.isPaused()) {
+        S.resume().then(function () { UI.toast('Resumed'); });
       } else {
-        Views.openStartPicker();
+        S.pause().then(function () { UI.toast('Paused — ' + UI.fmtDuration(S.elapsed()) + ' so far'); });
       }
-    });
+    }
 
-    $('#btnSwitch').addEventListener('click', Views.openStartPicker);
-    $('#liveBarStop').addEventListener('click', function () {
+    /* Read the session total *before* stopping: afterwards the running
+       record is gone, and the last segment alone would under-report a
+       session that had been paused. */
+    function stopSession() {
+      var total = S.elapsed();
       S.stop().then(function (entry) {
-        UI.toast(entry ? 'Logged ' + UI.fmtDuration(entry.end - entry.start) : 'Too short — discarded');
+        UI.toast(entry || total > 0 ? 'Logged ' + UI.fmtDuration(total) : 'Too short — discarded');
       });
-    });
+    }
+
+    $('#btnPrimary').addEventListener('click', primaryAction);
+    $('#btnStop').addEventListener('click', stopSession);
+    $('#btnSwitch').addEventListener('click', Views.openStartPicker);
+    $('#liveBarPause').addEventListener('click', primaryAction);
+    $('#liveBarStop').addEventListener('click', stopSession);
 
     $('#btnManageActivities').addEventListener('click', Views.openActivityManager);
     // Wrapped, not passed directly: the click Event would otherwise arrive
@@ -132,10 +141,9 @@
       var tag = (e.target.tagName || '').toLowerCase();
       if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
 
-      if (e.key === ' ') {
-        e.preventDefault();
-        if (S.state.running) S.stop(); else Views.openStartPicker();
-      }
+      // Space mirrors the primary button; Escape-adjacent 'x' stops.
+      if (e.key === ' ') { e.preventDefault(); primaryAction(); }
+      if (e.key === 'x' && S.state.running) stopSession();
       if (e.key === '1') show('today');
       if (e.key === '2') show('tasks');
       if (e.key === '3') show('habits');

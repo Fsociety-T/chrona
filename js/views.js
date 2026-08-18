@@ -125,26 +125,27 @@
 
   function renderTimerCard() {
     var running = S.state.running;
+    var paused = S.isPaused();
     var card = $('#timerCard');
-    var btn = $('#btnStartStop');
-    var btnText = $('#btnStartStopText');
+    var btnText = $('#btnPrimaryText');
     var label = $('#timerLabel');
     var ring = $('#ringFill');
 
-    card.classList.toggle('is-running', !!running);
-    btn.classList.toggle('is-running', !!running);
-    btnText.textContent = running ? 'Stop' : 'Start tracking';
-    $('#btnSwitch').hidden = !running;
+    card.classList.toggle('is-running', !!running && !paused);
+    card.classList.toggle('is-paused', paused);
+
+    // Primary action is whatever moves the session forward: start it,
+    // pause it, or pick it back up.
+    btnText.textContent = !running ? 'Start tracking' : (paused ? 'Resume' : 'Pause');
+    $('#timerSecondary').hidden = !running;
 
     if (running) {
-      label.textContent = S.runningLabel();
+      label.textContent = (paused ? 'Paused · ' : '') + S.runningLabel();
       var act = S.activityById(running.activityId);
-      var color = act ? act.color : 'var(--accent)';
-      ring.style.stroke = color;
-      label.style.color = '';
+      ring.style.stroke = act ? act.color : 'var(--accent)';
     } else {
       label.textContent = 'Nothing running';
-      ring.style.stroke = 'var(--line)';
+      ring.style.stroke = 'var(--track)';
       ring.style.strokeDashoffset = 553;
     }
     tickTimer();
@@ -165,13 +166,22 @@
 
     // live bar
     var bar = $('#liveBar');
+    var paused = S.isPaused();
     bar.hidden = !running;
+    bar.classList.toggle('is-paused', paused);
     document.body.classList.toggle('has-live', !!running);
     if (running) {
       $('#liveBarLabel').textContent = S.runningLabel();
       $('#liveBarTime').textContent = UI.fmtClock(ms);
       var act = S.activityById(running.activityId);
-      $('#liveBarSub').textContent = act ? act.icon + '  ' + act.name : 'since ' + UI.fmtTime(running.start);
+      $('#liveBarSub').textContent = paused
+        ? 'Paused'
+        : (act ? act.icon + '  ' + act.name : 'since ' + UI.fmtTime(S.sessionStart()));
+      $('#liveBarPause').setAttribute('aria-label', paused ? 'Resume timer' : 'Pause timer');
+      // Swap the glyph between pause bars and a play triangle.
+      $('#liveBarPauseIcon').innerHTML = paused
+        ? '<path d="M8 5.6v12.8a1 1 0 0 0 1.54.84l9.2-6.4a1 1 0 0 0 0-1.68l-9.2-6.4A1 1 0 0 0 8 5.6z" fill="currentColor"/>'
+        : '<rect x="7" y="5.5" width="3.6" height="13" rx="1.3" fill="currentColor"/><rect x="13.4" y="5.5" width="3.6" height="13" rx="1.3" fill="currentColor"/>';
     }
   }
 
@@ -240,7 +250,9 @@
 
     var entries = S.entriesForDay(day).slice().sort(function (a, b) { return b.start - a.start; });
     var running = S.state.running;
-    var liveOnThisDay = running &&
+    // `running.start` is null while paused — the segment before the pause
+    // is already a normal entry below, so there is no live row to draw.
+    var liveOnThisDay = running && running.start &&
       S.sliceForDay({ start: running.start, end: Date.now() }, day) > 0;
 
     if (liveOnThisDay) {
@@ -588,14 +600,22 @@
     var buckets = S.hourHistogram(from, to);
     var max = Math.max.apply(null, buckets) || 1;
 
+    // This grid shows density, not a category, so it stays monochrome —
+    // saturated colour in the app means "this is an activity".
+    var light = document.documentElement.getAttribute('data-theme') === 'light';
+    var base = light ? '9,9,11' : '244,244,245';
+
     buckets.forEach(function (ms, hour) {
       var intensity = ms / max;
-      var bg = intensity > 0
-        ? UI.hexToRgba('#6c8cff', 0.12 + intensity * 0.78)
-        : '';
+      var style = '';
+      if (intensity > 0) {
+        style = 'background:rgba(' + base + ',' + (0.1 + intensity * 0.8).toFixed(3) + ')';
+        // Flip the label once the cell is dark/light enough to swallow it.
+        if (intensity > 0.55) style += ';color:' + (light ? '#fff' : '#000');
+      }
       wrap.appendChild(el('div', {
         class: 'hm-cell',
-        style: bg ? 'background:' + bg + ';color:#fff' : '',
+        style: style,
         title: hour + ':00 — ' + UI.fmtDuration(ms),
         text: hour % 3 === 0 ? String(hour) : ''
       }));
@@ -1066,6 +1086,8 @@
   function runawayPending() {
     var r = S.state.running;
     if (!r || r.warned) return false;
+    // A paused session isn't running away — nothing is accruing.
+    if (r.paused) return false;
     var limit = runawayHours();
     if (!limit) return false;
     return S.elapsed() > limit * 3600000;
@@ -1096,7 +1118,7 @@
       body.appendChild(el('p', {
         class: 'hint', style: 'font-size:14px;color:var(--text-dim);margin:0 0 4px',
         text: '"' + label + '" has been running for ' + UI.fmtDuration(ran) +
-              ', since ' + UI.fmtTime(r.start) + '.'
+              ', since ' + UI.fmtTime(S.sessionStart()) + '.'
       }));
       body.appendChild(el('p', {
         class: 'hint', style: 'margin:0 0 16px',

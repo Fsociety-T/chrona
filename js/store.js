@@ -142,6 +142,39 @@
 
   /* ═══════════════ TIMER ENGINE ═══════════════ */
 
+  /* A session is a run of one or more worked *segments*, split by pauses.
+     Each segment is written as its own entry the moment it ends — on
+     pause as well as on stop — so the timeline and the day's totals are
+     never waiting on you to finish.
+
+     That also keeps the invariant everything else depends on: for every
+     entry, duration === end - start. A single row spanning a lunch break
+     would break the midnight slicing, the overlap check and the day
+     totals all at once, and would misreport when you actually worked. */
+
+  /* Write one worked segment. Returns the entry, or null when it was too
+     short to be anything but a mis-tap. */
+  function writeSegment(r, startTs, endTs) {
+    if (!startTs || !endTs || endTs - startTs < 5000) return Promise.resolve(null);
+
+    var entry = touch({
+      id: uid(),
+      activityId: r.activityId,
+      taskId: r.taskId,
+      habitId: r.habitId,
+      note: r.note || '',
+      start: startTs,
+      end: endTs,
+      day: dayKey(startTs)
+    });
+    state.entries.push(entry);
+    state.entries.sort(function (a, b) { return a.start - b.start; });
+
+    return DB.put('entries', entry).then(function () {
+      if (entry.habitId) return maybeAutoCheck(entry.habitId, entry.day);
+    }).then(function () { return entry; });
+  }
+
   /* Start tracking. Any already-running timer is stopped and saved first. */
   function start(opts) {
     opts = opts || {};
@@ -153,7 +186,14 @@
         taskId: opts.taskId || null,
         habitId: opts.habitId || null,
         note: opts.note || '',
+        // Start of the current open segment. Null while paused.
         start: Date.now(),
+        // Start of the whole session, which pausing does not move.
+        sessionStart: Date.now(),
+        // Time from segments already written, so the clock on screen keeps
+        // counting the session rather than restarting at each resume.
+        accumulated: 0,
+        paused: 0,
         // Advanced only while the app is on screen, so it records when you
         // were last actually here — which is what makes "stop at last
         // activity" a real answer rather than a guess.
@@ -174,43 +214,64 @@
     return switching ? stop(true).then(begin) : begin();
   }
 
-  /* Stop the running timer and write it as an entry.
-     Sessions under 5s are discarded as mis-taps. */
+  /* Stop the session, writing whatever segment is still open. */
   function stop(silent) {
     if (!state.running) return Promise.resolve(null);
     if (!silent && global.Sound) Sound.play('stop');
+
     var r = state.running;
-    var end = Date.now();
+    var openStart = r.start;      // null when the session is paused
     state.running = null;
 
-    return DB.put('meta', { key: 'running', value: null }).then(function () {
-      if (end - r.start < 5000) { emit(); return null; }
-
-      var entry = touch({
-        id: uid(),
-        activityId: r.activityId,
-        taskId: r.taskId,
-        habitId: r.habitId,
-        note: r.note || '',
-        start: r.start,
-        end: end,
-        day: dayKey(r.start)
-      });
-      state.entries.push(entry);
-      state.entries.sort(function (a, b) { return a.start - b.start; });
-
-      return DB.put('entries', entry).then(function () {
-        // A timed habit auto-completes once its daily target is met.
-        if (entry.habitId) return maybeAutoCheck(entry.habitId, entry.day);
-      }).then(function () {
-        emit();
-        return entry;
-      });
-    });
+    return DB.put('meta', { key: 'running', value: null })
+      .then(function () { return writeSegment(r, openStart, Date.now()); })
+      .then(function (entry) { emit(); return entry; });
   }
 
+  /* Pause: close the current segment, keep the selection. */
+  function pause() {
+    var r = state.running;
+    if (!r || r.paused || !r.start) return Promise.resolve(null);
+
+    if (global.Sound) Sound.play('pause');
+    var openStart = r.start;
+
+    return writeSegment(r, openStart, Date.now()).then(function (entry) {
+      // Only count time that actually got logged, so the clock on screen
+      // can never claim more than the timeline shows.
+      r.accumulated = (r.accumulated || 0) + (entry ? entry.end - entry.start : 0);
+      r.start = null;
+      r.paused = 1;
+      return saveRunning();
+    }).then(function () { emit(); return state.running; });
+  }
+
+  function resume() {
+    var r = state.running;
+    if (!r || !r.paused) return Promise.resolve(null);
+
+    if (global.Sound) Sound.play('resume');
+    r.start = Date.now();
+    r.lastSeen = Date.now();
+    r.paused = 0;
+    return saveRunning().then(function () { emit(); return r; });
+  }
+
+  function isPaused() { return !!(state.running && state.running.paused); }
+
+  /* Total active time in the session — completed segments plus the open
+     one. A pause freezes it rather than resetting it. */
   function elapsed() {
-    return state.running ? Date.now() - state.running.start : 0;
+    var r = state.running;
+    if (!r) return 0;
+    return (r.accumulated || 0) + (r.start ? Date.now() - r.start : 0);
+  }
+
+  /* When the whole session began, which pausing doesn't move.
+     Falls back to `start` for records written before pause existed. */
+  function sessionStart() {
+    var r = state.running;
+    return r ? (r.sessionStart || r.start) : 0;
   }
 
   /* Persist the running record without disturbing anything else. */
@@ -241,31 +302,16 @@
   /* Stop the running timer at a specific past moment — used by the
      runaway-timer prompt's "stop at last activity". */
   function stopAt(endTs) {
-    if (!state.running) return Promise.resolve(null);
     var r = state.running;
-    var end = Math.max(r.start, Math.min(endTs, Date.now()));
+    if (!r) return Promise.resolve(null);
+
+    var openStart = r.start;
+    var end = openStart ? Math.max(openStart, Math.min(endTs, Date.now())) : null;
 
     state.running = null;
-    return DB.put('meta', { key: 'running', value: null }).then(function () {
-      if (end - r.start < 5000) { emit(); return null; }
-
-      var entry = touch({
-        id: uid(),
-        activityId: r.activityId,
-        taskId: r.taskId,
-        habitId: r.habitId,
-        note: r.note || '',
-        start: r.start,
-        end: end,
-        day: dayKey(r.start)
-      });
-      state.entries.push(entry);
-      state.entries.sort(function (a, b) { return a.start - b.start; });
-
-      return DB.put('entries', entry).then(function () {
-        if (entry.habitId) return maybeAutoCheck(entry.habitId, entry.day);
-      }).then(function () { emit(); return entry; });
-    });
+    return DB.put('meta', { key: 'running', value: null })
+      .then(function () { return writeSegment(r, openStart, end); })
+      .then(function (entry) { emit(); return entry; });
   }
 
   /* Throw away the running timer without logging anything. */
@@ -382,10 +428,14 @@
     return dayKey(e.start) !== dayKey(e.end - 1);
   }
 
-  /* How much of the running timer falls inside `day`. */
+  /* How much of the running timer falls inside `day`.
+
+     Only the open segment counts here — segments closed by a pause were
+     already written as entries, so counting them again would double them. */
   function runningSliceForDay(day) {
-    if (!state.running) return 0;
-    return sliceForDay({ start: state.running.start, end: Date.now() }, day);
+    var r = state.running;
+    if (!r || !r.start) return 0;
+    return sliceForDay({ start: r.start, end: Date.now() }, day);
   }
 
   /* Total ms tracked on a day, optionally including the live timer. */
@@ -417,10 +467,11 @@
       map.set(k, (map.get(k) || 0) + ms);
     });
 
-    if (includeRunning && state.running) {
+    // Again, only the open segment: closed ones are already entries.
+    if (includeRunning && state.running && state.running.start) {
       var live = fromDay
         ? sliceForRange({ start: state.running.start, end: Date.now() }, fromDay, toDay)
-        : elapsed();
+        : Date.now() - state.running.start;
       if (live > 0) {
         var rk = state.running.activityId || '_none';
         map.set(rk, (map.get(rk) || 0) + live);
@@ -528,12 +579,17 @@
     return chain.then(function () { return tombstone('tasks', rec); }).then(function () { emit(); });
   }
 
-  /* Total time ever logged against a task. */
+  /* Total time ever logged against a task.
+
+     Only the *open* segment of a running session is added on top: any
+     earlier segment was already written as an entry when the timer was
+     paused, and adding elapsed() would count that stretch twice. */
   function timeOnTask(id) {
     var ms = state.entries
       .filter(function (e) { return e.taskId === id; })
       .reduce(function (n, e) { return n + durationOf(e); }, 0);
-    if (state.running && state.running.taskId === id) ms += elapsed();
+    var r = state.running;
+    if (r && r.taskId === id && r.start) ms += Date.now() - r.start;
     return ms;
   }
 
@@ -629,14 +685,19 @@
     return Promise.resolve();
   }
 
-  /* Minutes logged against a habit on a given day (includes live timer). */
+  /* Minutes logged against a habit on a given day, including the live
+     timer. Sliced to the day so a session over midnight counts on both
+     sides, and only the open segment is added — earlier segments of a
+     paused session are already entries. */
   function habitMinutes(habitId, day) {
     day = day || todayKey();
     var ms = state.entries
-      .filter(function (e) { return e.habitId === habitId && e.day === day; })
-      .reduce(function (n, e) { return n + durationOf(e); }, 0);
-    if (state.running && state.running.habitId === habitId && dayKey(state.running.start) === day) {
-      ms += elapsed();
+      .filter(function (e) { return e.habitId === habitId; })
+      .reduce(function (n, e) { return n + sliceForDay(e, day); }, 0);
+
+    var r = state.running;
+    if (r && r.habitId === habitId && r.start) {
+      ms += sliceForDay({ start: r.start, end: Date.now() }, day);
     }
     return Math.floor(ms / 60000);
   }
@@ -712,6 +773,7 @@
     PALETTE: PALETTE,
 
     start: start, stop: stop, stopAt: stopAt, discardRunning: discardRunning,
+    pause: pause, resume: resume, isPaused: isPaused, sessionStart: sessionStart,
     elapsed: elapsed, runningLabel: runningLabel,
     heartbeat: heartbeat, markWarned: markWarned,
 

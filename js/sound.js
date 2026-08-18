@@ -119,6 +119,18 @@
       chime(1046.5, t + 0.215, 0.42, 0.30);  // C6
     },
 
+    // Pausing: two notes stepping down, softer than a full stop.
+    pause: function (t) {
+      chime(659.25, t,         0.13, 0.20);  // E5
+      chime(523.25, t + 0.070, 0.22, 0.20);  // C5
+    },
+
+    // Resuming: the same pair the other way up.
+    resume: function (t) {
+      chime(523.25, t,         0.13, 0.20);  // C5
+      chime(659.25, t + 0.070, 0.24, 0.22);  // E5
+    },
+
     // Undoing a completion: a short low blip.
     undo: function (t) {
       note(392.00, t, 0.14, 'sine', 0.18);

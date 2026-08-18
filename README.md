@@ -40,6 +40,15 @@ mean anything.
 memory, so closing the tab, reloading, or force-quitting the app on your phone
 doesn't lose the session. Reopen and it's still counting.
 
+**Pause splits a session into segments.** Each stretch of work becomes its own
+entry the moment you pause, so the timeline and the day's totals are never
+waiting on you to finish. Pausing for lunch gives you `09:00–12:00` and
+`13:00–17:00`, not one row claiming seven hours across the middle of the day.
+
+That also protects the invariant everything else leans on: for every entry,
+`duration === end - start`. A single row spanning a break would quietly break
+the midnight arithmetic, the overlap check and the day totals all at once.
+
 **Four screens:**
 
 | Screen | What it's for |
@@ -68,7 +77,8 @@ Settings has a toggle, a volume slider, and buttons to preview each cue.
 
 | Key | Action |
 | --- | --- |
-| `Space` | Start / stop the timer |
+| `Space` | Start, pause, or resume — whatever moves the session on |
+| `x` | Stop the session |
 | `1` `2` `3` `4` | Jump to Today / Tasks / Habits / Insights |
 | `n` | New task or habit (on those screens) |
 | `Esc` | Close the open sheet |
@@ -173,18 +183,19 @@ needing the APK at all.
 
 ## The look
 
-The design is **soft-depth / claymorphism**: every surface is a solid pressed
-out of the background, built from two consistent shadow layers — a wide outer
-drop shadow that lifts the shape, and inner rims (light on top, dark below)
-that make a flat rectangle read as an inflated object.
+Black and flat, on one rule:
 
-The rule that keeps it coherent: **raised things are objects, sunken things are
-holes.** Cards, buttons and chips are raised. Tracks, progress grooves, inputs
-and the timer dial are inset. Pressing a control inverts its shadows, so tapping
-feels like pushing something in. One light source, top-left, for everything.
+> **The interface is monochrome. Colour means data.**
 
-It is all CSS — no images, no blur filters in the hot path, nothing that
-struggles on a mid-range Android.
+Every surface, border, button and label is black, white, or a grey between them.
+The only saturated colour in the app comes from your activities — so the stacked
+day bar, the legend and the charts are what your eye lands on, and a colour on
+screen always tells you something instead of just decorating.
+
+Depth is hairline borders rather than shadows, and the background is true `#000`
+so it goes properly dark on an OLED phone. Light mode is the same system
+inverted. It is all CSS — no images, no blur filters, nothing that struggles on
+a mid-range Android.
 
 ```
 index.html              app shell — all four screens live here
