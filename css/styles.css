@@ -293,6 +293,52 @@ body.has-live .app {
 
 .head-actions { display: flex; gap: 10px; flex: 0 0 auto; }
 
+/* ── day navigation ───────────────────────────────────────── */
+.daynav {
+  display: flex; align-items: center; gap: 10px;
+  margin-bottom: 18px;
+}
+.daynav-spacer { flex: 1; }
+.daynav-btn {
+  display: grid; place-items: center;
+  width: 42px; height: 42px; flex: 0 0 42px;
+  border: 0; border-radius: 15px;
+  background: var(--surface);
+  color: var(--text-dim);
+  box-shadow: var(--clay-out-sm), var(--clay-rim-sm);
+  transition: transform .18s var(--ease), box-shadow .18s var(--ease), opacity .2s;
+}
+.daynav-btn:active { transform: translateY(2px); box-shadow: var(--clay-press); }
+.daynav-btn:disabled {
+  opacity: .35;
+  box-shadow: var(--clay-in);
+  cursor: default;
+  transform: none;
+}
+.daynav-today {
+  border: 0; border-radius: 999px;
+  background: var(--surface);
+  color: var(--accent);
+  padding: 11px 18px;
+  font-size: 13px; font-weight: 700;
+  box-shadow: var(--clay-out-sm), var(--clay-rim-sm);
+  transition: transform .18s var(--ease), box-shadow .18s var(--ease);
+}
+.daynav-today:active { transform: translateY(2px); box-shadow: var(--clay-press); }
+
+/* An entry that runs over midnight shows on both days it touches. */
+.tl-span {
+  display: inline-block;
+  margin-left: 7px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--groove);
+  box-shadow: inset 0 1.5px 2px rgba(0,0,0,.35);
+  font-size: 10.5px; font-weight: 700;
+  color: var(--text-mute);
+  vertical-align: 1px;
+}
+
 /* Small marker on the account button when you're signed out, so the
    "your data isn't backed up" state is visible without opening anything. */
 .icon-btn { position: relative; }

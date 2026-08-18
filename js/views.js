@@ -46,15 +46,51 @@
 
   /* ══════════════════════ TODAY ══════════════════════ */
 
-  function renderToday() {
-    var today = S.todayKey();
-    $('#todayDate').textContent = UI.fmtDayLong(today);
+  /* Which day the Today screen is showing. Defaults to today; paging back
+     lets you review and correct a day after the fact. */
+  var viewDay = null;
 
-    renderTimerCard();
+  function currentDay() { return viewDay || S.todayKey(); }
+  function isToday() { return currentDay() === S.todayKey(); }
+
+  function goToDay(day) {
+    var today = S.todayKey();
+    if (day > today) day = today;
+    viewDay = day;
+    // Paging past the loaded window would otherwise show an empty day
+    // that actually has entries sitting in the database.
+    S.ensureLoaded(day).then(renderToday);
+    renderToday();
+  }
+
+  function resetDay() { viewDay = null; }
+
+  function renderToday() {
+    var day = currentDay();
+    var today = S.todayKey();
+    var onToday = day === today;
+
+    $('#todayDate').textContent = UI.fmtDayLong(day);
+    $('#todayTitle').textContent = onToday ? 'Today'
+      : day === S.addDays(today, -1) ? 'Yesterday'
+      : UI.fmtDayLong(day).split(',')[0];
+
+    $('#dayNext').disabled = onToday;
+    $('#dayToday').hidden = onToday;
+    $('#totalsTitle').textContent = onToday ? 'Where today went' : 'Where the day went';
+
+    // The timer, quick-start chips and the sign-in prompt are all about
+    // *now* — they'd be misleading sitting above a past day.
+    $('#timerCard').hidden = !onToday;
+    $('#quickStartSection').hidden = !onToday;
+
+    if (onToday) {
+      renderTimerCard();
+      renderQuickChips();
+    }
     renderSyncBanner();
-    renderQuickChips();
-    renderTodayTotals(today);
-    renderTimeline(today);
+    renderTodayTotals(day);
+    renderTimeline(day);
   }
 
   /* The banner and the header badge both exist so that "not backed up"
@@ -66,7 +102,7 @@
 
     var signedIn = window.Sync && Sync.signedIn();
 
-    banner.hidden = !!signedIn;
+    banner.hidden = !!signedIn || !isToday();
     if (badge) badge.hidden = !!signedIn;
 
     if (!signedIn) {
@@ -172,12 +208,14 @@
     var legend = $('#todayLegend');
     clear(stack); clear(legend);
 
-    var groups = S.byActivity(S.entriesForDay(day), !!(S.state.running && S.dayKey(S.state.running.start) === day));
+    // Scoped to the day, so a session running over midnight contributes
+    // only its share to each side.
+    var groups = S.byActivity(S.entriesForDay(day), true, day);
 
     if (!total) {
       stack.appendChild(el('div', { class: 'stackbar-empty' }));
       legend.appendChild(el('span', { class: 'legend-item', style: 'color:var(--text-mute)' },
-        ['Nothing tracked yet today.']));
+        [isToday() ? 'Nothing tracked yet today.' : 'Nothing tracked on this day.']));
       return;
     }
 
@@ -202,24 +240,28 @@
 
     var entries = S.entriesForDay(day).slice().sort(function (a, b) { return b.start - a.start; });
     var running = S.state.running;
+    var liveOnThisDay = running &&
+      S.sliceForDay({ start: running.start, end: Date.now() }, day) > 0;
 
-    if (running && S.dayKey(running.start) === day) {
+    if (liveOnThisDay) {
       wrap.appendChild(timelineRow({
         id: '_live',
         activityId: running.activityId, taskId: running.taskId, habitId: running.habitId,
         note: running.note, start: running.start, end: Date.now()
-      }, true));
+      }, true, day));
     }
 
-    if (!entries.length && !running) {
-      wrap.appendChild(el('p', { class: 'hint', text: 'No sessions logged today. Hit start above, or add one manually.' }));
+    if (!entries.length && !liveOnThisDay) {
+      wrap.appendChild(el('p', { class: 'hint', text: isToday()
+        ? 'No sessions logged today. Hit start above, or add one manually.'
+        : 'Nothing logged on this day. You can still add an entry.' }));
       return;
     }
 
-    entries.forEach(function (e) { wrap.appendChild(timelineRow(e, false)); });
+    entries.forEach(function (e) { wrap.appendChild(timelineRow(e, false, day)); });
   }
 
-  function timelineRow(e, isLive) {
+  function timelineRow(e, isLive, day) {
     var act = S.activityById(e.activityId);
     var color = act ? act.color : '#7b849b';
 
@@ -232,16 +274,32 @@
     var meta = UI.fmtTime(e.start) + ' – ' + (isLive ? 'now' : UI.fmtTime(e.end));
     if (sub) meta += '  ·  ' + sub;
 
+    // A session that ran over midnight appears on both days it touches.
+    // Show its true start and end, but count only this day's share, and
+    // say so — otherwise the row looks like it disagrees with the total.
+    var crosses = !isLive && day && S.spansDays(e);
+    var shown = (day && !isLive) ? S.sliceForDay(e, day) : (e.end - e.start);
+    if (crosses) {
+      meta = UI.fmtDayShortName(e.start) + ' ' + UI.fmtTime(e.start) +
+             ' – ' + UI.fmtDayShortName(e.end) + ' ' + UI.fmtTime(e.end) +
+             (sub ? '  ·  ' + sub : '');
+    }
+
+    var title_ = el('div', { class: 'tl-title' }, [
+      el('span', { text: title }),
+      crosses ? el('span', { class: 'tl-span', text: 'over midnight' }) : null
+    ]);
+
     return el('div', {
       class: 'tl-item' + (isLive ? ' is-live' : ''),
       onClick: isLive ? null : function () { openEntryActions(e); }
     }, [
       el('div', { class: 'tl-rail', style: 'background:' + color }),
       el('div', { class: 'tl-body' }, [
-        el('div', { class: 'tl-title', text: title }),
+        title_,
         el('div', { class: 'tl-meta', text: meta })
       ]),
-      el('div', { class: 'tl-dur mono', text: UI.fmtDuration(e.end - e.start) })
+      el('div', { class: 'tl-dur mono', text: UI.fmtDuration(shown) })
     ]);
   }
 
@@ -498,7 +556,9 @@
     var wrap = $('#breakdown');
     clear(wrap);
 
-    var groups = S.byActivity(S.entriesInRange(from, to), true);
+    // Scoped to the range, so a session hanging over either edge isn't
+    // counted in full here while the KPI above counts only its share.
+    var groups = S.byActivity(S.entriesInRange(from, to), true, from, to);
     if (!groups.length) {
       wrap.appendChild(el('p', { class: 'hint', text: 'No time tracked in this range yet.' }));
       return;
@@ -872,16 +932,28 @@
     });
   }
 
-  /* ── manual entry ─────────────────────────────────────────── */
-  function openManualEntry() {
-    UI.openSheet('Add entry', function (body, close) {
+  /* ── add / edit an entry ──────────────────────────────────── */
+  /* One form for both. Passing an entry edits it; passing nothing
+     creates one, defaulting to the last hour. */
+  function openEntryForm(entry) {
+    var editing = !!entry;
+
+    UI.openSheet(editing ? 'Edit entry' : 'Add entry', function (body, close) {
       var now = Date.now();
-      var startIn = el('input', { class: 'input', type: 'datetime-local', value: UI.toLocalInput(now - 3600000) });
-      var endIn   = el('input', { class: 'input', type: 'datetime-local', value: UI.toLocalInput(now) });
+      var startIn = el('input', {
+        class: 'input', type: 'datetime-local',
+        value: UI.toLocalInput(editing ? entry.start : now - 3600000)
+      });
+      var endIn = el('input', {
+        class: 'input', type: 'datetime-local',
+        value: UI.toLocalInput(editing ? entry.end : now)
+      });
 
       var actSel = el('select', { class: 'select' });
       S.state.activities.forEach(function (a) {
-        actSel.appendChild(el('option', { value: a.id, text: a.icon + '  ' + a.name }));
+        var o = el('option', { value: a.id, text: a.icon + '  ' + a.name });
+        if (editing && entry.activityId === a.id) o.selected = true;
+        actSel.appendChild(o);
       });
 
       body.appendChild(el('div', { class: 'field' }, [el('label', { class: 'label', text: 'Activity' }), actSel]));
@@ -891,44 +963,192 @@
       ]));
 
       var note = el('input', { class: 'input', type: 'text', placeholder: 'Optional note' });
+      note.value = editing ? (entry.note || '') : '';
       body.appendChild(el('div', { class: 'field' }, [el('label', { class: 'label', text: 'Note' }), note]));
 
-      body.appendChild(el('div', { class: 'sheet-actions' }, [
-        el('button', { class: 'btn btn-ghost', text: 'Cancel', onClick: close }),
-        el('button', {
-          class: 'btn btn-primary', text: 'Add',
-          onClick: function () {
-            var s = new Date(startIn.value).getTime();
-            var e = new Date(endIn.value).getTime();
-            if (!s || !e || isNaN(s) || isNaN(e)) { UI.toast('Pick both times'); return; }
-            if (e <= s) { UI.toast('End must be after start'); return; }
-            S.addManualEntry({ activityId: actSel.value, start: s, end: e, note: note.value.trim() })
-              .then(function () { close(); UI.toast('Entry added'); });
+      /* Live duration readout, so you can see what you're about to save. */
+      var dur = el('p', { class: 'hint', style: 'margin:-6px 0 0' });
+      var err = el('p', { class: 'hint', style: 'color:var(--bad);display:none' });
+      body.appendChild(dur);
+      body.appendChild(err);
+
+      function times() {
+        return [new Date(startIn.value).getTime(), new Date(endIn.value).getTime()];
+      }
+
+      function refresh() {
+        var t = times();
+        err.style.display = 'none';
+        if (isNaN(t[0]) || isNaN(t[1]) || t[1] <= t[0]) { dur.textContent = ''; return; }
+        dur.textContent = 'Duration: ' + UI.fmtDuration(t[1] - t[0]);
+      }
+      startIn.addEventListener('change', refresh);
+      endIn.addEventListener('change', refresh);
+      refresh();
+
+      function fail(msg) { err.textContent = msg; err.style.display = ''; }
+
+      var save = el('button', {
+        class: 'btn btn-primary', text: editing ? 'Save' : 'Add',
+        onClick: function () {
+          var t = times();
+          if (isNaN(t[0]) || isNaN(t[1])) { fail('Pick both a start and an end time.'); return; }
+          if (t[1] <= t[0]) { fail('The end has to come after the start.'); return; }
+          if (t[0] > Date.now()) { fail('That start time is in the future.'); return; }
+
+          // One timer at a time is the whole premise, so an overlap means
+          // one of the two entries is wrong. Better to say so than to
+          // quietly let a day add up to more than 24 hours.
+          var clash = S.findOverlap(t[0], t[1], editing ? entry.id : null);
+          if (clash) {
+            var ca = S.activityById(clash.activityId);
+            fail('Overlaps ' + (ca ? ca.name : 'another entry') + ', ' +
+                 UI.fmtTime(clash.start) + '–' + UI.fmtTime(clash.end) +
+                 '. Edit that one first.');
+            return;
           }
-        })
+
+          var data = {
+            activityId: actSel.value || null,
+            start: t[0], end: t[1],
+            note: note.value.trim()
+          };
+
+          var action = editing
+            ? S.updateEntry(entry.id, data)
+            : S.addManualEntry(data);
+
+          action.then(function () {
+            close();
+            UI.toast(editing ? 'Entry updated' : 'Entry added');
+          }).catch(function (e2) { fail(e2.message || 'Could not save that.'); });
+        }
+      });
+
+      body.appendChild(el('div', { class: 'sheet-actions' }, [
+        editing ? el('button', {
+          class: 'btn btn-danger', text: 'Delete',
+          onClick: function () {
+            close();
+            UI.confirmSheet('Delete this entry?',
+              'The time it recorded is removed from your totals.', 'Delete',
+              function () { S.deleteEntry(entry.id).then(function () { UI.toast('Entry deleted'); }); });
+          }
+        }) : el('button', { class: 'btn btn-ghost', text: 'Cancel', onClick: close }),
+        save
       ]));
     });
   }
 
-  /* ── entry actions ────────────────────────────────────────── */
+  /* Tapping a timeline row goes straight to editing it. */
   function openEntryActions(entry) {
-    var act = S.activityById(entry.activityId);
-    UI.openSheet('Entry', function (body, close) {
+    openEntryForm(entry);
+  }
+
+  /* ── runaway timer ────────────────────────────────────────── */
+
+  var RUNAWAY_KEY = 'chrona:runawayHours';
+  var RUNAWAY_DEFAULT = 8;
+
+  function runawayHours() {
+    try {
+      var v = localStorage.getItem(RUNAWAY_KEY);
+      if (v === null) return RUNAWAY_DEFAULT;
+      return parseInt(v, 10) || 0;      // 0 means off
+    } catch (e) { return RUNAWAY_DEFAULT; }
+  }
+
+  function setRunawayHours(h) {
+    try { localStorage.setItem(RUNAWAY_KEY, String(h)); } catch (e) {}
+  }
+
+  /* Has the running timer been going long enough to be suspicious? */
+  function runawayPending() {
+    var r = S.state.running;
+    if (!r || r.warned) return false;
+    var limit = runawayHours();
+    if (!limit) return false;
+    return S.elapsed() > limit * 3600000;
+  }
+
+  var runawayOpen = false;
+
+  /* Returns true when it opened the prompt, so callers can skip whatever
+     else they were about to show. */
+  function checkRunaway() {
+    if (runawayOpen || UI.sheetOpen() || !runawayPending()) return false;
+    runawayOpen = true;
+    openRunawaySheet();
+    return true;
+  }
+
+  function openRunawaySheet() {
+    var r = S.state.running;
+    var label = S.runningLabel();
+    var ran = S.elapsed();
+    // lastSeen is only advanced while the app is on screen, so it marks
+    // when you were genuinely last here.
+    var seen = r.lastSeen || r.start;
+    var trimmed = Math.max(0, seen - r.start);
+    var canTrim = trimmed > 60000 && seen < Date.now() - 60000;
+
+    UI.openSheet('Still running?', function (body, close) {
       body.appendChild(el('p', {
-        class: 'hint',
-        style: 'font-size:14px;color:var(--text-dim);margin:0 0 14px',
-        text: (act ? act.icon + ' ' + act.name : 'Unsorted') + '  ·  ' +
-              UI.fmtTime(entry.start) + '–' + UI.fmtTime(entry.end) +
-              '  ·  ' + UI.fmtDuration(entry.end - entry.start)
+        class: 'hint', style: 'font-size:14px;color:var(--text-dim);margin:0 0 4px',
+        text: '"' + label + '" has been running for ' + UI.fmtDuration(ran) +
+              ', since ' + UI.fmtTime(r.start) + '.'
       }));
-      body.appendChild(el('div', { class: 'sheet-actions' }, [
-        el('button', { class: 'btn btn-ghost', text: 'Close', onClick: close }),
-        el('button', {
-          class: 'btn btn-danger', text: 'Delete',
-          onClick: function () { close(); S.deleteEntry(entry.id).then(function () { UI.toast('Entry deleted'); }); }
-        })
-      ]));
-    });
+      body.appendChild(el('p', {
+        class: 'hint', style: 'margin:0 0 16px',
+        text: canTrim
+          ? 'You last had the app open at ' + UI.fmtTime(seen) +
+            '. If you forgot to stop it, you can end it there instead.'
+          : 'If that is right, keep it. Otherwise you can correct or discard it.'
+      }));
+
+      var actions = el('div', { style: 'display:flex;flex-direction:column;gap:10px' });
+
+      actions.appendChild(el('button', {
+        class: 'btn btn-primary', text: 'Keep it — still going',
+        onClick: function () { S.markWarned(); close(); }
+      }));
+
+      if (canTrim) {
+        actions.appendChild(el('button', {
+          class: 'btn btn-ghost',
+          text: 'Stop at ' + UI.fmtTime(seen) + '  (' + UI.fmtDuration(trimmed) + ')',
+          onClick: function () {
+            close();
+            S.stopAt(seen).then(function (entry) {
+              UI.toast(entry ? 'Logged ' + UI.fmtDuration(entry.end - entry.start) : 'Too short — discarded');
+            });
+          }
+        }));
+      }
+
+      actions.appendChild(el('button', {
+        class: 'btn btn-ghost', text: 'Stop now and edit the times',
+        onClick: function () {
+          close();
+          S.stop().then(function (entry) {
+            if (entry) openEntryForm(entry);
+            else UI.toast('Too short — discarded');
+          });
+        }
+      }));
+
+      actions.appendChild(el('button', {
+        class: 'btn btn-danger', text: 'Discard it',
+        onClick: function () {
+          close();
+          UI.confirmSheet('Discard this session?',
+            UI.fmtDuration(ran) + ' will not be logged at all.', 'Discard',
+            function () { S.discardRunning().then(function () { UI.toast('Discarded'); }); });
+        }
+      }));
+
+      body.appendChild(actions);
+    }, function () { runawayOpen = false; });
   }
 
   /* ── settings ─────────────────────────────────────────────── */
@@ -1002,6 +1222,26 @@
           });
         })
       ));
+
+      /* ── runaway timer ── */
+      body.appendChild(el('label', { class: 'label', style: 'margin-top:14px', text: 'Forgotten timer' }));
+
+      var runSeg = el('div', { class: 'seg' });
+      [[0, 'Off'], [4, '4h'], [8, '8h'], [12, '12h']].forEach(function (pair) {
+        runSeg.appendChild(el('button', {
+          class: 'seg-btn' + (runawayHours() === pair[0] ? ' is-on' : ''),
+          text: pair[1],
+          onClick: function (ev) {
+            setRunawayHours(pair[0]);
+            UI.$$('.seg-btn', runSeg).forEach(function (b) { b.classList.remove('is-on'); });
+            ev.currentTarget.classList.add('is-on');
+          }
+        }));
+      });
+      body.appendChild(runSeg);
+      body.appendChild(el('p', { class: 'hint', style: 'margin:-8px 0 4px', text:
+        'Ask about a timer that has run this long, in case you forgot to stop it. ' +
+        'Turn it off if you deliberately track long sessions like sleep.' }));
 
       /* ── account / cloud sync ── */
       body.appendChild(el('label', { class: 'label', style: 'margin-top:14px', text: 'Cloud sync' }));
@@ -1342,6 +1582,8 @@
 
   global.Views = {
     renderToday: renderToday, tickTimer: tickTimer,
+    goToDay: goToDay, resetDay: resetDay, currentDay: currentDay, isToday: isToday,
+    checkRunaway: checkRunaway,
     renderTasks: renderTasks, setTaskFilter: setTaskFilter,
     renderHabits: renderHabits,
     renderStats: renderStats, setStatsRange: setStatsRange,
@@ -1349,6 +1591,6 @@
     openAuthForm: openAuthForm, openConnectForm: openConnectForm,
     openActivityForm: openActivityForm, openActivityManager: openActivityManager,
     openTaskForm: openTaskForm, openHabitForm: openHabitForm,
-    openManualEntry: openManualEntry, openSettings: openSettings
+    openEntryForm: openEntryForm, openSettings: openSettings
   };
 })(window);

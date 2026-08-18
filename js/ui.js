@@ -78,6 +78,12 @@
     return d.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
   }
 
+  /* Weekday of a timestamp — "Mon", "Tue". Used when a session runs over
+     midnight and the times alone would be ambiguous. */
+  function fmtDayShortName(ts) {
+    return new Date(ts).toLocaleDateString(undefined, { weekday: 'short' });
+  }
+
   function fmtDayShort(dayStr) {
     var p = dayStr.split('-');
     var d = new Date(+p[0], +p[1] - 1, +p[2]);
@@ -171,6 +177,7 @@
     $: $, $$: $$, el: el, clear: clear, escapeHtml: escapeHtml,
     fmtDuration: fmtDuration, fmtShort: fmtShort, fmtClock: fmtClock,
     fmtTime: fmtTime, fmtDayLong: fmtDayLong, fmtDayShort: fmtDayShort,
+    fmtDayShortName: fmtDayShortName,
     toLocalInput: toLocalInput,
     initSheet: initSheet, openSheet: openSheet, closeSheet: closeSheet, sheetOpen: sheetOpen,
     toast: toast, confirmSheet: confirmSheet, hexToRgba: hexToRgba

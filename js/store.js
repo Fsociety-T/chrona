@@ -117,12 +117,27 @@
     return DB.putAll('activities', recs);
   }
 
-  /* Load entries for a day range into memory. */
+  /* How far back the in-memory window currently reaches. */
+  var loadedFrom = null;
+
+  /* Load entries for a day range into memory.
+     The lower bound is widened by a day because a session that started
+     the evening before still overlaps `fromDay`. */
   function loadEntries(fromDay, toDay) {
-    return DB.range('entries', 'day', fromDay, toDay).then(function (rows) {
+    loadedFrom = fromDay;
+    return DB.range('entries', 'day', addDays(fromDay, -1), toDay).then(function (rows) {
       state.entries = rows.filter(isLive).sort(function (a, b) { return a.start - b.start; });
       return state.entries;
     });
+  }
+
+  /* Widen the window when the user pages back past what's loaded.
+     Without this, browsing to an older day would show an empty day that
+     actually has entries sitting in the database. */
+  function ensureLoaded(day) {
+    if (loadedFrom && day >= loadedFrom) return Promise.resolve(false);
+    var from = addDays(day, -30);   // a margin, so paging back isn't one fetch per day
+    return loadEntries(from, todayKey()).then(function () { emit(); return true; });
   }
 
   /* ═══════════════ TIMER ENGINE ═══════════════ */
@@ -138,7 +153,14 @@
         taskId: opts.taskId || null,
         habitId: opts.habitId || null,
         note: opts.note || '',
-        start: Date.now()
+        start: Date.now(),
+        // Advanced only while the app is on screen, so it records when you
+        // were last actually here — which is what makes "stop at last
+        // activity" a real answer rather than a guess.
+        lastSeen: Date.now(),
+        // Set once the runaway prompt has been shown for this session, so
+        // reopening the app doesn't ask again.
+        warned: 0
       };
       return DB.put('meta', { key: 'running', value: state.running }).then(function () {
         // One cue for a switch, rather than a stop chime chased by a start one.
@@ -191,6 +213,68 @@
     return state.running ? Date.now() - state.running.start : 0;
   }
 
+  /* Persist the running record without disturbing anything else. */
+  function saveRunning() {
+    if (!state.running) return Promise.resolve();
+    return DB.put('meta', { key: 'running', value: state.running });
+  }
+
+  /* Called from the app's tick while the page is visible. Throttled: the
+     tick fires every second and this only needs a coarse "still here". */
+  var lastBeat = 0;
+  function heartbeat() {
+    if (!state.running) return Promise.resolve();
+    var now = Date.now();
+    state.running.lastSeen = now;
+    if (now - lastBeat < 60000) return Promise.resolve();
+    lastBeat = now;
+    return saveRunning();
+  }
+
+  /* Mark the runaway prompt as answered for this session. */
+  function markWarned() {
+    if (!state.running) return Promise.resolve();
+    state.running.warned = 1;
+    return saveRunning();
+  }
+
+  /* Stop the running timer at a specific past moment — used by the
+     runaway-timer prompt's "stop at last activity". */
+  function stopAt(endTs) {
+    if (!state.running) return Promise.resolve(null);
+    var r = state.running;
+    var end = Math.max(r.start, Math.min(endTs, Date.now()));
+
+    state.running = null;
+    return DB.put('meta', { key: 'running', value: null }).then(function () {
+      if (end - r.start < 5000) { emit(); return null; }
+
+      var entry = touch({
+        id: uid(),
+        activityId: r.activityId,
+        taskId: r.taskId,
+        habitId: r.habitId,
+        note: r.note || '',
+        start: r.start,
+        end: end,
+        day: dayKey(r.start)
+      });
+      state.entries.push(entry);
+      state.entries.sort(function (a, b) { return a.start - b.start; });
+
+      return DB.put('entries', entry).then(function () {
+        if (entry.habitId) return maybeAutoCheck(entry.habitId, entry.day);
+      }).then(function () { emit(); return entry; });
+    });
+  }
+
+  /* Throw away the running timer without logging anything. */
+  function discardRunning() {
+    if (!state.running) return Promise.resolve();
+    state.running = null;
+    return DB.put('meta', { key: 'running', value: null }).then(function () { emit(); });
+  }
+
   /* What is the running timer actually called? */
   function runningLabel() {
     var r = state.running;
@@ -227,48 +311,138 @@
     }).then(function () { emit(); return entry; });
   }
 
+  function entryById(id) {
+    return state.entries.find(function (e) { return e.id === id; }) || null;
+  }
+
+  /* Correct an already-logged session. */
+  function updateEntry(id, data) {
+    var prev = entryById(id);
+    if (!prev) return Promise.reject(new Error('That entry no longer exists.'));
+
+    var rec = touch(Object.assign({}, prev, data));
+    // An edit can move a session onto a different day, so `day` is always
+    // re-derived rather than carried over from the previous version.
+    rec.day = dayKey(rec.start);
+
+    state.entries = state.entries
+      .map(function (e) { return e.id === id ? rec : e; })
+      .sort(function (a, b) { return a.start - b.start; });
+
+    return DB.put('entries', rec).then(function () {
+      // Changing a duration can push a timed habit over its daily target,
+      // or was already over it and still is — either way, re-check.
+      if (rec.habitId) return maybeAutoCheck(rec.habitId, rec.day);
+    }).then(function () { emit(); return rec; });
+  }
+
   function deleteEntry(id) {
-    var rec = state.entries.find(function (e) { return e.id === id; });
+    var rec = entryById(id);
     state.entries = state.entries.filter(function (e) { return e.id !== id; });
     if (!rec) return Promise.resolve();
     return tombstone('entries', rec).then(function () { emit(); });
   }
 
+  /* Epoch ms bounds of a local day. */
+  function dayBounds(day) {
+    var p = day.split('-');
+    var from = new Date(+p[0], +p[1] - 1, +p[2], 0, 0, 0, 0).getTime();
+    var to = new Date(+p[0], +p[1] - 1, +p[2] + 1, 0, 0, 0, 0).getTime();
+    return [from, to];
+  }
+
+  /* How much of an entry actually falls inside `day`.
+
+     A session from 23:30 to 07:00 belongs to two days. Matching on the
+     stored `day` field alone would credit all 7.5h to the evening and
+     leave the morning showing nothing, so every per-day number is
+     computed from the overlap instead. */
+  function sliceForDay(entry, day) {
+    var b = dayBounds(day);
+    return Math.max(0, Math.min(entry.end, b[1]) - Math.max(entry.start, b[0]));
+  }
+
+  /* Entries touching a day — not just those that started on it. */
   function entriesForDay(day) {
-    return state.entries.filter(function (e) { return e.day === day; });
+    var b = dayBounds(day);
+    return state.entries.filter(function (e) { return e.start < b[1] && e.end > b[0]; });
   }
 
   function entriesInRange(fromDay, toDay) {
-    return state.entries.filter(function (e) { return e.day >= fromDay && e.day <= toDay; });
+    var lo = dayBounds(fromDay)[0];
+    var hi = dayBounds(toDay)[1];
+    return state.entries.filter(function (e) { return e.start < hi && e.end > lo; });
   }
 
   function durationOf(e) { return Math.max(0, e.end - e.start); }
 
+  /* Does an entry cross a midnight boundary? Used by the timeline to
+     label a session that shows up on more than one day. */
+  function spansDays(e) {
+    return dayKey(e.start) !== dayKey(e.end - 1);
+  }
+
+  /* How much of the running timer falls inside `day`. */
+  function runningSliceForDay(day) {
+    if (!state.running) return 0;
+    return sliceForDay({ start: state.running.start, end: Date.now() }, day);
+  }
+
   /* Total ms tracked on a day, optionally including the live timer. */
   function totalForDay(day, includeRunning) {
-    var sum = entriesForDay(day).reduce(function (n, e) { return n + durationOf(e); }, 0);
-    if (includeRunning && state.running && dayKey(state.running.start) === day) {
-      sum += elapsed();
-    }
+    var sum = entriesForDay(day).reduce(function (n, e) { return n + sliceForDay(e, day); }, 0);
+    if (includeRunning) sum += runningSliceForDay(day);
     return sum;
   }
 
-  /* Group a set of entries by activity → [{activity, ms}] sorted desc. */
-  function byActivity(entries, includeRunning) {
+  /* How much of an entry falls inside a day range, inclusive. */
+  function sliceForRange(entry, fromDay, toDay) {
+    var lo = dayBounds(fromDay)[0];
+    var hi = dayBounds(toDay)[1];
+    return Math.max(0, Math.min(entry.end, hi) - Math.max(entry.start, lo));
+  }
+
+  /* Group entries by activity → [{activity, ms}] sorted desc.
+
+     Pass a day range to scope each entry to its overlap with it. Without
+     that, an entry hanging over either edge is counted in full and the
+     activity breakdown stops matching the totals above it. */
+  function byActivity(entries, includeRunning, fromDay, toDay) {
+    if (fromDay && !toDay) toDay = fromDay;
+
     var map = new Map();
     entries.forEach(function (e) {
       var k = e.activityId || '_none';
-      map.set(k, (map.get(k) || 0) + durationOf(e));
+      var ms = fromDay ? sliceForRange(e, fromDay, toDay) : durationOf(e);
+      map.set(k, (map.get(k) || 0) + ms);
     });
+
     if (includeRunning && state.running) {
-      var rk = state.running.activityId || '_none';
-      map.set(rk, (map.get(rk) || 0) + elapsed());
+      var live = fromDay
+        ? sliceForRange({ start: state.running.start, end: Date.now() }, fromDay, toDay)
+        : elapsed();
+      if (live > 0) {
+        var rk = state.running.activityId || '_none';
+        map.set(rk, (map.get(rk) || 0) + live);
+      }
     }
     var out = [];
     map.forEach(function (ms, k) {
+      if (ms <= 0) return;
       out.push({ activity: activityById(k) || { id: '_none', name: 'Unsorted', color: '#7b849b', icon: '•' }, ms: ms });
     });
     return out.sort(function (a, b) { return b.ms - a.ms; });
+  }
+
+  /* First entry overlapping [start, end), ignoring one id and tombstones.
+
+     One timer runs at a time, so overlapping entries mean one of them is
+     simply wrong — and left alone they push a day's total past 24 hours. */
+  function findOverlap(start, end, ignoreId) {
+    return state.entries.find(function (e) {
+      if (e.id === ignoreId || e.deleted) return false;
+      return e.start < end && e.end > start;
+    }) || null;
   }
 
   /* ═══════════════ ACTIVITIES ═══════════════ */
@@ -537,12 +711,16 @@
     touch: touch, isLive: isLive,
     PALETTE: PALETTE,
 
-    start: start, stop: stop, elapsed: elapsed, runningLabel: runningLabel,
+    start: start, stop: stop, stopAt: stopAt, discardRunning: discardRunning,
+    elapsed: elapsed, runningLabel: runningLabel,
+    heartbeat: heartbeat, markWarned: markWarned,
 
-    addManualEntry: addManualEntry, deleteEntry: deleteEntry,
+    addManualEntry: addManualEntry, updateEntry: updateEntry, deleteEntry: deleteEntry,
+    entryById: entryById, findOverlap: findOverlap,
     entriesForDay: entriesForDay, entriesInRange: entriesInRange,
-    durationOf: durationOf, totalForDay: totalForDay, byActivity: byActivity,
-    loadEntries: loadEntries,
+    durationOf: durationOf, sliceForDay: sliceForDay, sliceForRange: sliceForRange,
+    spansDays: spansDays, totalForDay: totalForDay, byActivity: byActivity,
+    loadEntries: loadEntries, ensureLoaded: ensureLoaded,
 
     activityById: activityById, saveActivity: saveActivity, deleteActivity: deleteActivity,
 

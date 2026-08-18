@@ -12,6 +12,9 @@
 
   /* ── routing ──────────────────────────────────────────────── */
   function show(view) {
+    // Coming back to Today should land on today, not wherever you had
+    // paged back to earlier.
+    if (view === 'today') Views.resetDay();
     current = view;
     $$('.view').forEach(function (v) { v.hidden = v.dataset.view !== view; });
     $$('.nav-btn').forEach(function (b) { b.classList.toggle('is-on', b.dataset.nav === view); });
@@ -43,9 +46,17 @@
 
   function onTick() {
     Views.tickTimer();
+
+    // Records that you were here. Only advances while the page is visible,
+    // which is what makes "stop at last activity" meaningful later.
+    if (!document.hidden) S.heartbeat();
+
     // Keep today's totals honest while the clock runs, but don't thrash
     // the whole timeline — refresh totals once a minute.
     if (current === 'today' && new Date().getSeconds() === 0) Views.renderToday();
+
+    // Catches a timer that crosses the threshold while the app is open.
+    if (new Date().getSeconds() === 30) Views.checkRunaway();
   }
 
   /* ── wiring ───────────────────────────────────────────────── */
@@ -74,7 +85,20 @@
     });
 
     $('#btnManageActivities').addEventListener('click', Views.openActivityManager);
-    $('#btnAddManual').addEventListener('click', Views.openManualEntry);
+    // Wrapped, not passed directly: the click Event would otherwise arrive
+    // as the `entry` argument and put the form into edit mode.
+    $('#btnAddManual').addEventListener('click', function () { Views.openEntryForm(null); });
+
+    // Day navigation on Today
+    $('#dayPrev').addEventListener('click', function () {
+      Views.goToDay(S.addDays(Views.currentDay(), -1));
+    });
+    $('#dayNext').addEventListener('click', function () {
+      Views.goToDay(S.addDays(Views.currentDay(), 1));
+    });
+    $('#dayToday').addEventListener('click', function () {
+      Views.goToDay(S.todayKey());
+    });
     $('#btnSettings').addEventListener('click', Views.openSettings);
     $('#btnAccount').addEventListener('click', Views.openAccount);
     $('#syncBanner').addEventListener('click', Views.openAccount);
@@ -123,7 +147,11 @@
     // Coming back to the app after it was backgrounded: the clock may have
     // drifted or the day may have rolled over, so redraw from scratch.
     document.addEventListener('visibilitychange', function () {
-      if (!document.hidden) render();
+      if (document.hidden) return;
+      render();
+      // Returning after a long absence is exactly when a forgotten timer
+      // shows up, so check before the heartbeat moves lastSeen forward.
+      Views.checkRunaway();
     });
 
     // Re-render on any state change.
@@ -159,7 +187,12 @@
       setTimeout(function () { boot.remove(); }, 500);
 
       if (S.state.running) {
-        UI.toast('Still tracking "' + S.runningLabel() + '"');
+        // A timer that ran past the threshold while the app was closed is
+        // the main case this catches; the prompt takes priority over the
+        // reassuring toast.
+        if (!Views.checkRunaway() && !UI.sheetOpen()) {
+          UI.toast('Still tracking "' + S.runningLabel() + '"');
+        }
       }
     }).catch(function (err) {
       console.error('[chrona] boot failed', err);
