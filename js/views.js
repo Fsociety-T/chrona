@@ -587,6 +587,12 @@
         el('div', { class: 'goal-title' + (done ? ' is-done' : ''), text: o.title }),
         el('div', { class: 'goal-scope', text: (act ? act.icon + ' ' + act.name : 'Any activity') })
       ]),
+      // Straight to the card, without going through the edit form.
+      el('button', {
+        class: 'goal-cert',
+        'aria-label': done ? 'Get certificate' : 'Make a commitment card',
+        onClick: function (ev) { ev.stopPropagation(); openCertificate(o); }
+      }, [done ? '🏆' : '✎']),
       done ? el('span', { class: 'goal-badge', text: '✓' }) : null
     ]);
 
@@ -713,6 +719,12 @@
         body.appendChild(el('p', { class: 'hint', text:
           'Progress: ' + fmtGoalValue(goal, p.value) + ' of ' + fmtGoalValue(goal, p.target) +
           ' (' + Math.round(p.pct) + '%). Counted from your tracked time, so correcting an entry updates it.' }));
+
+        body.appendChild(el('button', {
+          class: 'btn btn-ghost', style: 'width:100%;margin-top:14px',
+          text: goal.achievedAt ? '🏆  Get your certificate' : '✎  Make a commitment card',
+          onClick: function () { close(); openCertificate(goal); }
+        }));
       }
 
       var err = el('p', { class: 'hint', style: 'color:var(--bad);display:none' });
@@ -753,6 +765,103 @@
         }) : el('button', { class: 'btn btn-ghost', text: 'Cancel', onClick: close }),
         save
       ]));
+    });
+  }
+
+  /* ── certificate / commitment card ────────────────────────── */
+  function openCertificate(goal) {
+    var achieved = !!goal.achievedAt;
+
+    UI.openSheet(achieved ? 'Certificate' : 'Commitment card', function (body, close) {
+      var canvas = el('canvas', { class: 'cert-canvas' });
+
+      var nameIn = el('input', {
+        class: 'input', type: 'text', placeholder: 'Your name',
+        value: Certificate.getName()
+      });
+      var wantIn = el('input', {
+        class: 'input', type: 'text', maxlength: '70',
+        placeholder: achieved ? 'a person who finishes what they start' : 'a person who finishes what they start',
+        value: Certificate.getWant()
+      });
+
+      var light = document.documentElement.getAttribute('data-theme') === 'light';
+      var act = S.activityById(goal.activityId);
+
+      function repaint() {
+        Certificate.draw(canvas, {
+          objective: goal,
+          progress: S.objectiveProgress(goal),
+          name: nameIn.value,
+          want: wantIn.value,
+          light: light,
+          accent: act ? act.color : undefined,
+          scope: act ? act.name : 'any activity'
+        });
+      }
+
+      // Persist as they type, so the next card remembers them.
+      nameIn.addEventListener('input', function () { Certificate.setName(nameIn.value); repaint(); });
+      wantIn.addEventListener('input', function () { Certificate.setWant(wantIn.value); repaint(); });
+
+      body.appendChild(el('div', { class: 'cert-preview' }, [canvas]));
+
+      body.appendChild(el('div', { class: 'field' }, [
+        el('label', { class: 'label', text: 'Your name' }), nameIn
+      ]));
+      body.appendChild(el('div', { class: 'field' }, [
+        el('label', { class: 'label', text: achieved ? 'On the way to becoming' : 'I want to be' }), wantIn
+      ]));
+      body.appendChild(el('p', { class: 'hint', style: 'margin:-8px 0 0', text:
+        'Write it as it should read after "I want to be" — the card adds the quotes.' }));
+
+      /* Light/dark of the card itself, independent of the app theme —
+         a dark card is not what you want on a printed page. */
+      var themeSeg = el('div', { class: 'seg', style: 'margin:16px 0 4px' });
+      [['dark', 'Dark card'], ['light', 'Light card']].forEach(function (pair) {
+        themeSeg.appendChild(el('button', {
+          class: 'seg-btn' + ((pair[0] === 'light') === light ? ' is-on' : ''),
+          text: pair[1],
+          onClick: function (ev) {
+            light = pair[0] === 'light';
+            UI.$$('.seg-btn', themeSeg).forEach(function (b) { b.classList.remove('is-on'); });
+            ev.currentTarget.classList.add('is-on');
+            repaint();
+          }
+        }));
+      });
+      body.appendChild(themeSeg);
+
+      var actions = el('div', { class: 'sheet-actions' }, [
+        el('button', { class: 'btn btn-ghost', text: 'Close', onClick: close }),
+        el('button', {
+          class: 'btn btn-primary', text: 'Save image',
+          onClick: function (ev) {
+            var b = ev.currentTarget;
+            b.textContent = 'Saving…';
+            Certificate.download(canvas, goal)
+              .then(function () { UI.toast('Card saved'); })
+              .catch(function (e) { UI.toast(e.message || 'Could not save'); })
+              .then(function () { b.textContent = 'Save image'; });
+          }
+        })
+      ]);
+      body.appendChild(actions);
+
+      // Only offer sharing where the browser can actually do it.
+      if (Certificate.canShare()) {
+        body.appendChild(el('button', {
+          class: 'btn btn-ghost', style: 'width:100%;margin-top:10px', text: 'Share',
+          onClick: function () {
+            Certificate.share(canvas, goal).catch(function (e) {
+              if (e && e.name === 'AbortError') return;   // they backed out
+              UI.toast(e.message || 'Could not share');
+            });
+          }
+        }));
+      }
+
+      repaint();
     });
   }
 
@@ -1866,6 +1975,7 @@
     renderTasks: renderTasks, setTaskFilter: setTaskFilter,
     renderHabits: renderHabits,
     renderGoals: renderGoals, setGoalFilter: setGoalFilter, openGoalForm: openGoalForm,
+    openCertificate: openCertificate,
     renderStats: renderStats, setStatsRange: setStatsRange,
     openStartPicker: openStartPicker, openAccount: openAccount,
     openAuthForm: openAuthForm, openConnectForm: openConnectForm,

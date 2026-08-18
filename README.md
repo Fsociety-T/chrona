@@ -72,6 +72,25 @@ The same honesty applies to the badge: if the time behind an achievement is
 later removed or edited down, the achievement is revoked. It was never actually
 earned, and leaving the tick there would be the app lying to you.
 
+### Cards you can keep
+
+Every objective can be saved as an image. There are two, same frame, different
+voice:
+
+- a **commitment card** for an objective still running — what you're going to
+  do, and who you're trying to become
+- a **certificate** for one you've achieved — what you did, and when
+
+Both carry your name and a line you write yourself: *I want to be — "a person
+who finishes what they start"*. Edit it in the sheet and the preview redraws as
+you type; the card can be dark or light independently of the app, because a
+dark card is not what you want on a printed page.
+
+They're drawn on a `<canvas>` in [js/certificate.js](js/certificate.js) and
+exported as PNG — no library, no server, no fonts to fetch. It works offline and
+adds nothing to the APK. Long names shrink to fit and long ambitions wrap and
+ellipsise rather than spilling out of the frame.
+
 ### Sound
 
 Short cues play as you use the app — rising notes on start, falling on stop, a
@@ -222,6 +241,7 @@ js/db.js                IndexedDB layer (stores, indexes, export/import)
 js/sound.js             synthesized audio cues (no audio files)
 js/store.js             state, the timer engine, every data operation
 js/sync.js              Supabase auth + two-way sync, over plain fetch
+js/certificate.js       objective cards drawn on canvas, exported as PNG
 supabase/schema.sql     tables, indexes, row-level security policies
 js/ui.js                DOM helpers, formatting, sheets, toasts
 js/views.js             rendering for each screen + all forms

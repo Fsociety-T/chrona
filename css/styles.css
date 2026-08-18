@@ -675,6 +675,33 @@ body.has-live .app {
 
 .goal-status { font-size: 12.5px; color: var(--text-mute); }
 
+.goal-cert {
+  display: grid; place-items: center;
+  width: 34px; height: 34px; flex: 0 0 34px;
+  border: 0; border-radius: 12px;
+  background: var(--surface-2);
+  font-size: 15px;
+  box-shadow: var(--clay-out-sm), var(--clay-rim-sm);
+  transition: transform .18s var(--ease), box-shadow .18s var(--ease);
+}
+.goal-cert:active { transform: translateY(2px); box-shadow: var(--clay-press); }
+
+/* ── certificate preview ──────────────────────────────────── */
+/* The canvas is 1080x1350; it is only ever shown scaled to the sheet. */
+.cert-preview {
+  border-radius: var(--r-md);
+  background: var(--groove);
+  box-shadow: var(--clay-in);
+  padding: 12px;
+  margin-bottom: 18px;
+}
+.cert-canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 10px;
+}
+
 /* ── segmented control ────────────────────────────────────── */
 .seg {
   display: flex; gap: 5px;
