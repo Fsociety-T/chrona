@@ -29,6 +29,7 @@
     if (current === 'today')  Views.renderToday();
     if (current === 'tasks')  Views.renderTasks();
     if (current === 'habits') Views.renderHabits();
+    if (current === 'goals')  Views.renderGoals();
     if (current === 'stats')  Views.renderStats();
     syncTick();
   }
@@ -117,6 +118,15 @@
     Sync.on(function () { if (current === 'today') Views.renderToday(); });
     $('#btnNewTask').addEventListener('click', function () { Views.openTaskForm(null); });
     $('#btnNewHabit').addEventListener('click', function () { Views.openHabitForm(null); });
+    $('#btnNewGoal').addEventListener('click', function () { Views.openGoalForm(null); });
+
+    $$('#goalFilter .seg-btn').forEach(function (b) {
+      b.addEventListener('click', function () {
+        $$('#goalFilter .seg-btn').forEach(function (x) { x.classList.remove('is-on'); });
+        b.classList.add('is-on');
+        Views.setGoalFilter(b.dataset.filter);
+      });
+    });
 
     // segmented controls
     $$('#taskFilter .seg-btn').forEach(function (b) {
@@ -147,9 +157,11 @@
       if (e.key === '1') show('today');
       if (e.key === '2') show('tasks');
       if (e.key === '3') show('habits');
-      if (e.key === '4') show('stats');
+      if (e.key === '4') show('goals');
+      if (e.key === '5') show('stats');
       if (e.key === 'n' && current === 'tasks')  Views.openTaskForm(null);
       if (e.key === 'n' && current === 'habits') Views.openHabitForm(null);
+      if (e.key === 'n' && current === 'goals')  Views.openGoalForm(null);
     });
 
     // Coming back to the app after it was backgrounded: the clock may have
@@ -184,7 +196,7 @@
     S.init().then(function () {
       var saved;
       try { saved = localStorage.getItem('chrona:view'); } catch (e) {}
-      show(saved && ['today', 'tasks', 'habits', 'stats'].indexOf(saved) !== -1 ? saved : 'today');
+      show(saved && ['today', 'tasks', 'habits', 'goals', 'stats'].indexOf(saved) !== -1 ? saved : 'today');
 
       // Background sync only starts once the store is live, so the first
       // debounced run has real state to push.

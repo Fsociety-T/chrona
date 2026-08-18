@@ -515,6 +515,263 @@
     }, children);
   }
 
+  /* ══════════════════════ OBJECTIVES ══════════════════════ */
+
+  var goalFilter = 'active';
+
+  function setGoalFilter(f) { goalFilter = f; renderGoals(); }
+
+  function renderGoals() {
+    var list = $('#goalList');
+    clear(list);
+
+    var shown = S.objectivesFor(goalFilter);
+    var active = S.objectivesFor('active');
+    var achieved = S.objectivesFor('achieved');
+    $('#goalsSummary').textContent = active.length + ' running · ' + achieved.length + ' achieved';
+
+    $('#goalEmpty').hidden = shown.length > 0;
+    if (!shown.length) {
+      $('#goalEmptyTitle').textContent =
+        goalFilter === 'achieved' ? 'Nothing achieved yet'
+        : goalFilter === 'missed' ? 'Nothing missed'
+        : 'No objectives yet';
+      $('#goalEmptySub').textContent =
+        goalFilter === 'achieved' ? 'Objectives you complete are kept here.'
+        : goalFilter === 'missed' ? 'Objectives whose window closed before you hit the target would show up here.'
+        : 'Set a target like "Deep work 40h this month" and watch it fill up as you track.';
+    }
+
+    shown.forEach(function (o) { list.appendChild(goalCard(o)); });
+  }
+
+  /* How a target reads back: 40 → "40h", 20 → "20 sessions". */
+  function fmtGoalValue(o, n) {
+    if (o.metric === 'sessions') {
+      var v = Math.round(n);
+      return v + (v === 1 ? ' session' : ' sessions');
+    }
+    return (n < 10 ? Math.round(n * 10) / 10 : Math.round(n)) + 'h';
+  }
+
+  function goalCard(o) {
+    var p = S.objectiveProgress(o);
+    var act = S.activityById(o.activityId);
+    var color = act ? act.color : 'var(--text-dim)';
+    var done = !!o.achievedAt;
+
+    /* Status line: what you'd want to know at a glance. */
+    var status;
+    if (done) {
+      // A bare weekday reads fine for something from this week and is
+      // useless for anything older, so only recent ones get a name.
+      var day = S.dayKey(o.achievedAt);
+      var today = S.todayKey();
+      status = 'Achieved ' + (
+        day === today ? 'today'
+        : day === S.addDays(today, -1) ? 'yesterday'
+        : new Date(o.achievedAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })
+      );
+    } else if (p.expired) {
+      status = 'Window closed · reached ' + Math.round(p.pct) + '%';
+    } else if (p.daysLeft === 0) {
+      status = 'Last day';
+    } else {
+      status = p.daysLeft + (p.daysLeft === 1 ? ' day left' : ' days left') +
+               ' · ' + (p.onTrack ? 'on track' : 'behind');
+    }
+
+    var head = el('div', { class: 'goal-head' }, [
+      el('span', { class: 'goal-icon', text: o.icon || '◎' }),
+      el('div', { class: 'goal-titles' }, [
+        el('div', { class: 'goal-title' + (done ? ' is-done' : ''), text: o.title }),
+        el('div', { class: 'goal-scope', text: (act ? act.icon + ' ' + act.name : 'Any activity') })
+      ]),
+      done ? el('span', { class: 'goal-badge', text: '✓' }) : null
+    ]);
+
+    var bar = el('div', { class: 'goal-track' }, [
+      el('div', {
+        class: 'goal-fill',
+        style: 'width:' + p.pct + '%;background:' + (act ? act.color : 'var(--text-dim)')
+      })
+    ]);
+
+    var figures = el('div', { class: 'goal-figures' }, [
+      el('span', { class: 'goal-value mono' }, [
+        el('b', { text: fmtGoalValue(o, p.value) }),
+        el('span', { class: 'goal-target', text: ' / ' + fmtGoalValue(o, p.target) })
+      ]),
+      el('span', { class: 'goal-pct mono', text: Math.round(p.pct) + '%' })
+    ]);
+
+    return el('div', {
+      class: 'goal-card' + (done ? ' is-done' : '') + (p.expired && !done ? ' is-missed' : ''),
+      onClick: function () { openGoalForm(o); }
+    }, [
+      head,
+      figures,
+      bar,
+      el('div', { class: 'goal-status', text: status })
+    ]);
+  }
+
+  /* ── objective form ───────────────────────────────────────── */
+  function openGoalForm(goal) {
+    var editing = !!goal;
+    var icon = editing ? goal.icon : '🎯';
+    var metric = editing ? goal.metric : 'hours';
+
+    UI.openSheet(editing ? 'Objective' : 'New objective', function (body, close) {
+      var title = el('input', {
+        class: 'input', type: 'text', placeholder: 'e.g. Deep work this month',
+        value: editing ? goal.title : ''
+      });
+      body.appendChild(el('div', { class: 'field' }, [el('label', { class: 'label', text: 'Objective' }), title]));
+
+      /* what to count */
+      var seg = el('div', { class: 'seg', style: 'margin-bottom:15px' });
+      var bHours = el('button', { class: 'seg-btn' + (metric === 'hours' ? ' is-on' : ''), text: 'Hours' });
+      var bSess  = el('button', { class: 'seg-btn' + (metric === 'sessions' ? ' is-on' : ''), text: 'Sessions' });
+      var unitLabel = el('span', { text: metric === 'hours' ? 'Target (hours)' : 'Target (sessions)' });
+
+      function pickMetric(m) {
+        metric = m;
+        bHours.classList.toggle('is-on', m === 'hours');
+        bSess.classList.toggle('is-on', m === 'sessions');
+        unitLabel.textContent = m === 'hours' ? 'Target (hours)' : 'Target (sessions)';
+      }
+      bHours.addEventListener('click', function () { pickMetric('hours'); });
+      bSess.addEventListener('click', function () { pickMetric('sessions'); });
+      seg.appendChild(bHours); seg.appendChild(bSess);
+      body.appendChild(el('label', { class: 'label', text: 'Measure' }));
+      body.appendChild(seg);
+
+      var target = el('input', {
+        class: 'input', type: 'number', min: '0.5', step: '0.5', placeholder: '40',
+        value: editing ? String(goal.target) : ''
+      });
+
+      var actSel = el('select', { class: 'select' });
+      actSel.appendChild(el('option', { value: '', text: 'Any activity' }));
+      S.state.activities.forEach(function (a) {
+        var opt = el('option', { value: a.id, text: a.icon + '  ' + a.name });
+        if (editing && goal.activityId === a.id) opt.selected = true;
+        actSel.appendChild(opt);
+      });
+
+      body.appendChild(el('div', { class: 'row-2' }, [
+        el('div', { class: 'field' }, [el('label', { class: 'label' }, [unitLabel]), target]),
+        el('div', { class: 'field' }, [el('label', { class: 'label', text: 'Count' }), actSel])
+      ]));
+
+      /* window */
+      var today = S.todayKey();
+      var from = el('input', { class: 'input', type: 'date', value: editing ? goal.fromDay : today });
+      var to   = el('input', { class: 'input', type: 'date', value: editing ? goal.toDay : monthEnd(today) });
+
+      body.appendChild(el('div', { class: 'row-2' }, [
+        el('div', { class: 'field' }, [el('label', { class: 'label', text: 'From' }), from]),
+        el('div', { class: 'field' }, [el('label', { class: 'label', text: 'Until' }), to])
+      ]));
+
+      /* quick windows, because typing two dates for "this month" is a chore */
+      if (!editing) {
+        var quick = el('div', { class: 'chip-row', style: 'margin:-8px 0 12px' });
+        [
+          ['This week',  weekStart(today), weekEnd(today)],
+          ['This month', monthStart(today), monthEnd(today)],
+          ['Next 30 days', today, S.addDays(today, 29)],
+          ['This year',  today.slice(0, 4) + '-01-01', today.slice(0, 4) + '-12-31']
+        ].forEach(function (q) {
+          quick.appendChild(el('button', {
+            class: 'chip', text: q[0],
+            onClick: function () { from.value = q[1]; to.value = q[2]; }
+          }));
+        });
+        body.appendChild(quick);
+      }
+
+      /* icon */
+      var iconWrap = el('div', { class: 'swatches' });
+      ['🎯','⏱','📚','💪','🧠','🔥','🏁','⭐','📈','🌱'].forEach(function (ic) {
+        var b = el('button', {
+          class: 'swatch' + (ic === icon ? ' is-on' : ''),
+          style: 'background:var(--surface-2);font-size:17px', text: ic,
+          onClick: function () {
+            icon = ic;
+            UI.$$('.swatch', iconWrap).forEach(function (x) { x.classList.remove('is-on'); });
+            b.classList.add('is-on');
+          }
+        });
+        iconWrap.appendChild(b);
+      });
+      body.appendChild(el('div', { class: 'field' }, [el('label', { class: 'label', text: 'Icon' }), iconWrap]));
+
+      if (editing) {
+        var p = S.objectiveProgress(goal);
+        body.appendChild(el('p', { class: 'hint', text:
+          'Progress: ' + fmtGoalValue(goal, p.value) + ' of ' + fmtGoalValue(goal, p.target) +
+          ' (' + Math.round(p.pct) + '%). Counted from your tracked time, so correcting an entry updates it.' }));
+      }
+
+      var err = el('p', { class: 'hint', style: 'color:var(--bad);display:none' });
+      body.appendChild(err);
+
+      var save = el('button', {
+        class: 'btn btn-primary', text: editing ? 'Save' : 'Create',
+        onClick: function () {
+          var t = title.value.trim();
+          var n = parseFloat(target.value);
+          if (!t) { err.textContent = 'Give the objective a name.'; err.style.display = ''; return; }
+          if (!n || n <= 0) { err.textContent = 'Set a target above zero.'; err.style.display = ''; return; }
+          if (!from.value || !to.value) { err.textContent = 'Pick both dates.'; err.style.display = ''; return; }
+          if (to.value < from.value) { err.textContent = 'The end date is before the start.'; err.style.display = ''; return; }
+
+          S.saveObjective({
+            id: editing ? goal.id : null,
+            title: t,
+            metric: metric,
+            target: n,
+            activityId: actSel.value || null,
+            fromDay: from.value,
+            toDay: to.value,
+            icon: icon
+          }).then(function () { close(); UI.toast(editing ? 'Saved' : 'Objective set'); });
+        }
+      });
+
+      body.appendChild(el('div', { class: 'sheet-actions' }, [
+        editing ? el('button', {
+          class: 'btn btn-danger', text: 'Delete',
+          onClick: function () {
+            close();
+            UI.confirmSheet('Delete this objective?',
+              'Your tracked time is untouched — only the target goes.', 'Delete',
+              function () { S.deleteObjective(goal.id).then(function () { UI.toast('Deleted'); }); });
+          }
+        }) : el('button', { class: 'btn btn-ghost', text: 'Cancel', onClick: close }),
+        save
+      ]));
+    });
+  }
+
+  /* Date helpers for the quick window buttons. */
+  function monthStart(day) { return day.slice(0, 8) + '01'; }
+  function monthEnd(day) {
+    var p = day.split('-');
+    var d = new Date(+p[0], +p[1], 0);          // day 0 of next month = last of this
+    return S.dayKey(d);
+  }
+  function weekStart(day) {
+    var p = day.split('-');
+    var d = new Date(+p[0], +p[1] - 1, +p[2]);
+    var back = (d.getDay() + 6) % 7;            // Monday-based
+    d.setDate(d.getDate() - back);
+    return S.dayKey(d);
+  }
+  function weekEnd(day) { return S.addDays(weekStart(day), 6); }
+
   /* ══════════════════════ INSIGHTS ══════════════════════ */
 
   var statsRange = 7;
@@ -1608,6 +1865,7 @@
     checkRunaway: checkRunaway,
     renderTasks: renderTasks, setTaskFilter: setTaskFilter,
     renderHabits: renderHabits,
+    renderGoals: renderGoals, setGoalFilter: setGoalFilter, openGoalForm: openGoalForm,
     renderStats: renderStats, setStatsRange: setStatsRange,
     openStartPicker: openStartPicker, openAccount: openAccount,
     openAuthForm: openAuthForm, openConnectForm: openConnectForm,

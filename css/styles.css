@@ -612,6 +612,69 @@ body.has-live .app {
               inset 0 -2px 3px rgba(0,0,0,.3);
 }
 
+/* ── objective cards ──────────────────────────────────────── */
+.goal-card {
+  display: flex; flex-direction: column; gap: 12px;
+  border: 0; border-radius: var(--r-md);
+  background: var(--surface);
+  padding: 18px 17px;
+  box-shadow: var(--clay-out-sm), var(--clay-rim-sm);
+  transition: transform .18s var(--ease), box-shadow .18s var(--ease);
+}
+.goal-card:active { transform: translateY(2px); box-shadow: var(--clay-press); }
+/* Achieved cards read as settled rather than active. */
+.goal-card.is-done { box-shadow: var(--clay-out-sm), var(--clay-rim-sm), 0 0 0 1.5px var(--text-dim); }
+.goal-card.is-missed { opacity: .62; }
+
+.goal-head { display: flex; align-items: center; gap: 13px; }
+.goal-icon {
+  display: grid; place-items: center;
+  width: 42px; height: 42px; flex: 0 0 42px;
+  border-radius: 15px;
+  background: var(--groove);
+  box-shadow: var(--clay-in);
+  font-size: 19px;
+}
+.goal-titles { flex: 1; min-width: 0; }
+.goal-title {
+  font-size: 15px; font-weight: 700;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.goal-title.is-done { color: var(--text-dim); }
+.goal-scope { font-size: 12.5px; color: var(--text-mute); margin-top: 2px; }
+.goal-badge {
+  display: grid; place-items: center;
+  width: 30px; height: 30px; flex: 0 0 30px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 15px; font-weight: 800;
+  box-shadow: var(--glow),
+              inset 0 2px 1px rgba(255,255,255,.8),
+              inset 0 -3px 6px rgba(0,0,0,.2);
+}
+
+.goal-figures { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.goal-value { font-size: 15px; }
+.goal-value b { font-weight: 800; }
+.goal-target { color: var(--text-mute); font-weight: 600; }
+.goal-pct { font-size: 13px; font-weight: 700; color: var(--text-dim); }
+
+.goal-track {
+  height: 14px; border-radius: 999px;
+  background: var(--groove);
+  box-shadow: var(--clay-in);
+  overflow: hidden; padding: 3px;
+}
+.goal-fill {
+  height: 100%; border-radius: 999px;
+  transition: width .6s var(--ease);
+  box-shadow: inset 0 1.5px 1px rgba(255,255,255,.3),
+              inset 0 -2px 3px rgba(0,0,0,.3);
+}
+
+.goal-status { font-size: 12.5px; color: var(--text-mute); }
+
 /* ── segmented control ────────────────────────────────────── */
 .seg {
   display: flex; gap: 5px;

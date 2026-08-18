@@ -218,6 +218,9 @@
   /* Local records are camelCase; Postgres columns are snake_case.
      A couple of names also collide with SQL keywords. */
 
+  /* `start`, `end` and `order` all collide with SQL keywords or reserved
+     words, so those get explicit column names. Objectives sidestep the
+     problem by using fromDay/toDay locally, which map cleanly. */
   var OVERRIDES = {
     entries:    { start: 'start_at', end: 'end_at' },
     activities: { order: 'sort_order' }
@@ -270,7 +273,7 @@
      plain names like `tasks` collide with whatever else lives in the
      database, and `create table if not exists` fails silently when
      they do. */
-  var TABLES = ['activities', 'entries', 'tasks', 'habits', 'checks'];
+  var TABLES = ['activities', 'entries', 'tasks', 'habits', 'checks', 'objectives'];
   function remoteTable(store) { return 'chrona_' + store; }
 
   function syncNow(opts) {
@@ -286,7 +289,7 @@
     state.syncing = true;
     setStatus('syncing', 'Syncing…');
 
-    var report = { pushed: 0, pulled: 0, tables: {} };
+    var report = { pushed: 0, pulled: 0, missing: [], tables: {} };
     // Captured before the work starts, so records changed *during* this
     // sync are not skipped by the next one.
     var startedAt = Date.now();
@@ -312,15 +315,38 @@
   }
 
   function describe(r) {
-    if (!r.pushed && !r.pulled) return 'Up to date';
     var bits = [];
     if (r.pushed) bits.push('sent ' + r.pushed);
     if (r.pulled) bits.push('received ' + r.pulled);
-    return bits.join(', ');
+    var main = bits.length ? bits.join(', ') : 'Up to date';
+
+    if (r.missing && r.missing.length) {
+      // Name the SQL file rather than the table, since that is the thing
+      // they actually have to go and run.
+      main += ' · ' + r.missing.join(', ') +
+              ' not set up on the server yet (run supabase/02-objectives.sql)';
+    }
+    return main;
+  }
+
+  /* A table the server doesn't have yet — a migration SQL file that
+     hasn't been run — must not take the whole sync down with it. Skip
+     that one table, note it, and carry on with the rest. */
+  function isMissingTable(err) {
+    if (!err) return false;
+    if (err.status === 404) return true;
+    var msg = String(err.message || '');
+    return /does not exist|Could not find the table|schema cache/i.test(msg);
   }
 
   function syncTable(table, report) {
-    return pushTable(table, report).then(function () { return pullTable(table, report); });
+    return pushTable(table, report)
+      .then(function () { return pullTable(table, report); })
+      .catch(function (err) {
+        if (!isMissingTable(err)) throw err;
+        report.missing.push(table);
+        return null;
+      });
   }
 
   /* Upload every locally-changed row. */

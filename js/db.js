@@ -8,7 +8,7 @@
   'use strict';
 
   var DB_NAME = 'chrona';
-  var DB_VERSION = 2;
+  var DB_VERSION = 3;
 
   /* Stores
      activities : { id, name, color, icon, archived, order }
@@ -42,6 +42,9 @@
                             ['dirty', 'dirty'], ['updated_at', 'updated_at']] },
     checks:     { keyPath: 'id', sync: true,
                   indexes: [['habitId', 'habitId'], ['day', 'day'],
+                            ['dirty', 'dirty'], ['updated_at', 'updated_at']] },
+    objectives: { keyPath: 'id', sync: true,
+                  indexes: [['toDay', 'toDay'], ['achievedAt', 'achievedAt'],
                             ['dirty', 'dirty'], ['updated_at', 'updated_at']] },
     meta:       { keyPath: 'key', indexes: [] }
   };
@@ -77,9 +80,12 @@
 
         // v1 → v2: existing records predate sync. Stamp them so the first
         // push uploads everything the user already has rather than losing it.
+        // (v2 → v3 only adds the objectives store, which starts empty, so
+        //  there is nothing to backfill for that step.)
         if (oldVersion > 0 && oldVersion < 2) {
           var now = Date.now();
           SYNCED.forEach(function (name) {
+            if (!ev.target.transaction.objectStoreNames.contains(name)) return;
             var store = ev.target.transaction.objectStore(name);
             store.openCursor().onsuccess = function (e) {
               var cursor = e.target.result;

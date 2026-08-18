@@ -27,6 +27,7 @@
     tasks: [],
     habits: [],
     checks: [],
+    objectives: [],
     running: null,   // { activityId, taskId, habitId, note, start }
     ready: false
   };
@@ -98,13 +99,14 @@
   function reload() {
     return Promise.all([
       DB.all('activities'), DB.all('tasks'), DB.all('habits'),
-      DB.all('checks'), DB.get('meta', 'running')
+      DB.all('checks'), DB.get('meta', 'running'), DB.all('objectives')
     ]).then(function (res) {
       state.activities = res[0].filter(isLive).sort(function (a, b) { return a.order - b.order; });
-      state.tasks   = res[1].filter(isLive);
-      state.habits  = res[2].filter(isLive);
-      state.checks  = res[3].filter(isLive);
-      state.running = res[4] ? res[4].value : null;
+      state.tasks      = res[1].filter(isLive);
+      state.habits     = res[2].filter(isLive);
+      state.checks     = res[3].filter(isLive);
+      state.running    = res[4] ? res[4].value : null;
+      state.objectives = (res[5] || []).filter(isLive);
       return loadEntries(addDays(todayKey(), -120), todayKey());
     });
   }
@@ -172,7 +174,7 @@
 
     return DB.put('entries', entry).then(function () {
       if (entry.habitId) return maybeAutoCheck(entry.habitId, entry.day);
-    }).then(function () { return entry; });
+    }).then(refreshAchievements).then(function () { return entry; });
   }
 
   /* Start tracking. Any already-running timer is stopped and saved first. */
@@ -354,7 +356,7 @@
     state.entries.sort(function (a, b) { return a.start - b.start; });
     return DB.put('entries', entry).then(function () {
       if (entry.habitId) return maybeAutoCheck(entry.habitId, entry.day);
-    }).then(function () { emit(); return entry; });
+    }).then(refreshAchievements).then(function () { emit(); return entry; });
   }
 
   function entryById(id) {
@@ -379,14 +381,18 @@
       // Changing a duration can push a timed habit over its daily target,
       // or was already over it and still is — either way, re-check.
       if (rec.habitId) return maybeAutoCheck(rec.habitId, rec.day);
-    }).then(function () { emit(); return rec; });
+    }).then(refreshAchievements).then(function () { emit(); return rec; });
   }
 
   function deleteEntry(id) {
     var rec = entryById(id);
     state.entries = state.entries.filter(function (e) { return e.id !== id; });
     if (!rec) return Promise.resolve();
-    return tombstone('entries', rec).then(function () { emit(); });
+    // Removing time can drop an objective back below its target, so the
+    // achievement has to be re-evaluated rather than left standing.
+    return tombstone('entries', rec)
+      .then(refreshAchievements)
+      .then(function () { emit(); });
   }
 
   /* Epoch ms bounds of a local day. */
@@ -725,6 +731,146 @@
     return habit.days.indexOf(new Date().getDay()) !== -1;
   }
 
+  /* ═══════════════ OBJECTIVES ═══════════════ */
+
+  /* An objective is a target over a date window: "Deep work 40h this
+     month", "20 study sessions before the exam".
+
+     Progress is never stored — it is recomputed from entries every time.
+     That means correcting a session, deleting one, or moving it to
+     another day updates the objective immediately and honestly, with no
+     counter drifting out of step with the timeline. */
+
+  function objectiveById(id) {
+    return state.objectives.find(function (o) { return o.id === id; }) || null;
+  }
+
+  function saveObjective(data) {
+    var rec;
+    if (data.id) {
+      rec = touch(Object.assign({}, objectiveById(data.id), data));
+      state.objectives = state.objectives.map(function (o) { return o.id === rec.id ? rec : o; });
+    } else {
+      rec = touch({
+        id: uid(),
+        title: data.title,
+        activityId: data.activityId || null,   // null = any activity
+        metric: data.metric || 'hours',        // 'hours' | 'sessions'
+        target: data.target,
+        fromDay: data.fromDay,
+        toDay: data.toDay,
+        // `from`/`to` would collide with SQL keywords, hence fromDay/toDay.
+        icon: data.icon || '◎',
+        achievedAt: null,
+        archived: false,
+        createdAt: Date.now()
+      });
+      state.objectives.push(rec);
+    }
+    return DB.put('objectives', rec)
+      .then(function () { return refreshAchievements(); })
+      .then(function () { emit(); return rec; });
+  }
+
+  function deleteObjective(id) {
+    var rec = objectiveById(id);
+    state.objectives = state.objectives.filter(function (o) { return o.id !== id; });
+    if (!rec) return Promise.resolve();
+    return tombstone('objectives', rec).then(function () { emit(); });
+  }
+
+  /* Current standing of an objective, all derived. */
+  function objectiveProgress(o) {
+    var rows = entriesInRange(o.fromDay, o.toDay).filter(function (e) {
+      return !o.activityId || e.activityId === o.activityId;
+    });
+
+    var value;
+    if (o.metric === 'sessions') {
+      value = rows.length;
+    } else {
+      var ms = rows.reduce(function (n, e) {
+        return n + sliceForRange(e, o.fromDay, o.toDay);
+      }, 0);
+      // The open segment counts too, so a running timer moves the bar.
+      var r = state.running;
+      if (r && r.start && (!o.activityId || r.activityId === o.activityId)) {
+        ms += sliceForRange({ start: r.start, end: Date.now() }, o.fromDay, o.toDay);
+      }
+      value = ms / 3600000;
+    }
+
+    var target = o.target || 1;
+    var pct = Math.min(100, (value / target) * 100);
+
+    // Where you should be by now if you were spreading it evenly.
+    var today = todayKey();
+    var totalDays = daysBetween(o.fromDay, o.toDay) + 1;
+    var elapsedDays = Math.min(totalDays, Math.max(0, daysBetween(o.fromDay, today) + 1));
+    var expectedPct = totalDays > 0 ? (elapsedDays / totalDays) * 100 : 0;
+
+    return {
+      value: value,
+      target: target,
+      pct: pct,
+      done: value >= target,
+      daysLeft: Math.max(0, daysBetween(today, o.toDay)),
+      expired: today > o.toDay,
+      // Only meaningful while the window is open.
+      onTrack: pct >= expectedPct - 0.001
+    };
+  }
+
+  function daysBetween(a, b) {
+    var pa = a.split('-'), pb = b.split('-');
+    var da = new Date(+pa[0], +pa[1] - 1, +pa[2]);
+    var db = new Date(+pb[0], +pb[1] - 1, +pb[2]);
+    return Math.round((db - da) / 86400000);
+  }
+
+  /* Stamp or clear achievedAt so it matches the numbers.
+
+     Clearing matters: if a session that pushed an objective over the line
+     is later deleted or corrected downward, the achievement was never
+     really earned, and leaving the badge would be the app lying to you. */
+  function refreshAchievements() {
+    var changed = [];
+
+    state.objectives.forEach(function (o) {
+      var p = objectiveProgress(o);
+      if (p.done && !o.achievedAt) {
+        changed.push(touch(Object.assign({}, o, { achievedAt: Date.now() })));
+      } else if (!p.done && o.achievedAt) {
+        changed.push(touch(Object.assign({}, o, { achievedAt: null })));
+      }
+    });
+
+    if (!changed.length) return Promise.resolve([]);
+
+    var newlyDone = changed.filter(function (o) { return o.achievedAt; });
+    state.objectives = state.objectives.map(function (o) {
+      var hit = changed.find(function (c) { return c.id === o.id; });
+      return hit || o;
+    });
+
+    if (newlyDone.length && global.Sound) Sound.play('goal', 0.2);
+
+    return DB.putAll('objectives', changed).then(function () { return newlyDone; });
+  }
+
+  function objectivesFor(kind) {
+    var today = todayKey();
+    return state.objectives.filter(function (o) {
+      if (o.archived) return false;
+      if (kind === 'achieved') return !!o.achievedAt;
+      if (kind === 'missed')   return !o.achievedAt && today > o.toDay;
+      return !o.achievedAt && today <= o.toDay;      // active
+    }).sort(function (a, b) {
+      if (kind === 'achieved') return (b.achievedAt || 0) - (a.achievedAt || 0);
+      return a.toDay < b.toDay ? -1 : a.toDay > b.toDay ? 1 : 0;
+    });
+  }
+
   /* ═══════════════ INSIGHTS ═══════════════ */
 
   /* Consecutive days (ending today) with any tracked time. */
@@ -792,6 +938,11 @@
     habitById: habitById, saveHabit: saveHabit, deleteHabit: deleteHabit,
     isChecked: isChecked, toggleCheck: toggleCheck, habitMinutes: habitMinutes,
     habitStreak: habitStreak, isScheduledToday: isScheduledToday,
+
+    objectiveById: objectiveById, saveObjective: saveObjective,
+    deleteObjective: deleteObjective, objectiveProgress: objectiveProgress,
+    objectivesFor: objectivesFor, refreshAchievements: refreshAchievements,
+    daysBetween: daysBetween,
 
     trackingStreak: trackingStreak, hourHistogram: hourHistogram, dailySeries: dailySeries
   };

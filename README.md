@@ -56,10 +56,21 @@ the midnight arithmetic, the overlap check and the day totals all at once.
 | **Today** | The live timer, quick-start chips, today's breakdown, and a timeline of every session |
 | **Tasks** | Things to do. Hit ▶ on any task to time your work on it |
 | **Habits** | Either a simple daily check, or *timed* with a minute target |
+| **Goals** | Objectives with a target and a deadline — "Deep work 40h this month". They fill up as you track, and achieved ones are kept |
 | **Insights** | Daily hours, time per activity, and which hours of the day you're actually active |
 
 **Timed habits tick themselves off.** Set "Read — 30 min/day", and once you've
 logged 30 minutes against it, it's marked done automatically.
+
+**Objectives are never stored as a counter.** A goal's progress is recomputed
+from your entries every time it's shown, so correcting a session, deleting one,
+or moving it to another day updates the objective immediately. A stored total
+would drift out of step the first time you fixed a mistake and then quietly stay
+wrong.
+
+The same honesty applies to the badge: if the time behind an achievement is
+later removed or edited down, the achievement is revoked. It was never actually
+earned, and leaving the tick there would be the app lying to you.
 
 ### Sound
 
@@ -109,8 +120,10 @@ install, nothing extra in the APK.
 2. In the dashboard: **SQL Editor → New query**. Run
    [supabase/00-repair.sql](supabase/00-repair.sql) first *only if you ran an
    earlier version of the schema*, then run
-   [supabase/schema.sql](supabase/schema.sql). This creates the five
-   `chrona_*` tables, the indexes, and the row-level security policies.
+   [supabase/schema.sql](supabase/schema.sql), then
+   [supabase/02-objectives.sql](supabase/02-objectives.sql). Together these
+   create the six `chrona_*` tables, the indexes, and the row-level security
+   policies.
 
    > Tables are prefixed `chrona_` on purpose. Plain names like `tasks` are
    > common, and `create table if not exists` on an existing name does nothing
