@@ -145,7 +145,7 @@
       ring.style.stroke = act ? act.color : 'var(--accent)';
     } else {
       label.textContent = 'Nothing running';
-      ring.style.stroke = 'var(--track)';
+      ring.style.stroke = 'var(--line)';
       ring.style.strokeDashoffset = 553;
     }
     tickTimer();

@@ -183,19 +183,24 @@ needing the APK at all.
 
 ## The look
 
-Black and flat, on one rule:
+Black soft-depth — minimal 3D — held together by two rules.
 
-> **The interface is monochrome. Colour means data.**
+**Every surface is a solid pressed out of the background.** Raised things are
+objects, sunken things are holes: cards, buttons and chips are extruded, while
+tracks, grooves, inputs and the timer dial are inset. Pressing a control inverts
+its shadows so it physically pushes in. One light source, top-left, throughout.
 
-Every surface, border, button and label is black, white, or a grey between them.
-The only saturated colour in the app comes from your activities — so the stacked
-day bar, the legend and the charts are what your eye lands on, and a colour on
-screen always tells you something instead of just decorating.
+**The interface is monochrome; colour means data.** The depth is built from
+black, white and greys alone, so the only saturated colour in the app comes from
+your activities — the day bar, the legend and the charts are what your eye lands
+on, and a colour on screen always tells you something rather than just
+decorating.
 
-Depth is hairline borders rather than shadows, and the background is true `#000`
-so it goes properly dark on an OLED phone. Light mode is the same system
-inverted. It is all CSS — no images, no blur filters, nothing that struggles on
-a mid-range Android.
+The background is near-black rather than pure `#000`, because clay needs a
+surface slightly lighter than its ground to catch the light; at pure black there
+is nothing for a highlight to sit against. Light mode is the same system
+inverted. It is all CSS — no images, nothing that struggles on a mid-range
+Android.
 
 ```
 index.html              app shell — all four screens live here
