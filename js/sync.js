@@ -404,6 +404,44 @@
     return syncNow();
   }
 
+  /* Mark every local record for upload, then sync.
+
+     Needed when you point the app at a *different* Supabase project.
+     After a successful sync every record is dirty=0, so against an
+     empty new project the next sync would push nothing and report
+     "Up to date" — the app would look synced while the new project
+     stayed empty. This re-flags everything so the new project gets the
+     full history.
+
+     Tombstones are re-flagged too: a delete that never reached the new
+     project would otherwise be lost, and the row would come back the
+     next time another device pushed it. */
+  function reuploadAll() {
+    if (!configured()) return Promise.reject(new Error('Not connected to Supabase.'));
+    if (!signedIn()) return Promise.reject(new Error('Not signed in.'));
+
+    setStatus('syncing', 'Preparing full upload…');
+
+    var stores = DB.syncedStores();
+    return stores.reduce(function (chain, name) {
+      return chain.then(function () {
+        return DB.all(name).then(function (rows) {
+          if (!rows.length) return;
+          var flagged = rows.map(function (r) {
+            return Object.assign({}, r, { dirty: 1 });
+          });
+          return DB.putAll(name, flagged);
+        });
+      });
+    }, Promise.resolve()).then(function () {
+      // Reset the watermark too, so the pull half starts from scratch
+      // rather than assuming the new project already has our history.
+      state.lastSync = 0;
+      try { localStorage.removeItem(LS.lastSync); } catch (e) {}
+      return syncNow();
+    });
+  }
+
   /* ── automatic triggers ───────────────────────────────────── */
 
   var debounceHandle = null;
@@ -447,7 +485,8 @@
     load: load, configured: configured, signedIn: signedIn, userEmail: userEmail,
     setConfig: setConfig, setAutoSync: setAutoSync,
     signUp: signUp, signIn: signIn, signOut: signOut,
-    syncNow: syncNow, pullAll: pullAll, scheduleSync: scheduleSync, startAuto: startAuto,
+    syncNow: syncNow, pullAll: pullAll, reuploadAll: reuploadAll,
+    scheduleSync: scheduleSync, startAuto: startAuto,
     // exposed for tests
     _toRemote: toRemote, _toLocal: toLocal
   };

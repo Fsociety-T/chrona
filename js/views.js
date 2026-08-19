@@ -2194,6 +2194,26 @@
           }
         })
       ]));
+
+      /* Needed after switching to a different Supabase project: local
+         records are already marked clean, so a plain sync would push
+         nothing and the new project would stay empty. */
+      wrap.appendChild(el('button', {
+        class: 'btn btn-ghost', style: 'width:100%;margin-top:10px',
+        text: 'Re-upload everything',
+        onClick: function (ev) {
+          var b = ev.currentTarget;
+          b.disabled = true;
+          b.textContent = 'Uploading…';
+          Sync.reuploadAll()
+            .then(function () { UI.toast('Uploaded — ' + Sync.state.message); })
+            .catch(function (e) { UI.toast(e.message || 'Upload failed'); })
+            .then(function () { b.disabled = false; b.textContent = 'Re-upload everything'; paint(); });
+        }
+      }));
+      wrap.appendChild(el('p', { class: 'hint', text:
+        'Use this after pointing the app at a different Supabase project — it pushes ' +
+        'everything on this device, not just what changed since the last sync.' }));
     }
 
     paint();

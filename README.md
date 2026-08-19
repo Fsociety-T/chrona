@@ -174,19 +174,19 @@ install, nothing extra in the APK.
 ### Setting it up
 
 1. Create a free project at [supabase.com](https://supabase.com).
-2. In the dashboard: **SQL Editor → New query**. Run
-   [supabase/00-repair.sql](supabase/00-repair.sql) first *only if you ran an
-   earlier version of the schema*, then run
-   [supabase/schema.sql](supabase/schema.sql),
-   [supabase/02-objectives.sql](supabase/02-objectives.sql), then
-   [supabase/03-activity-kind.sql](supabase/03-activity-kind.sql). Together these
-   create the six `chrona_*` tables, the indexes, and the row-level security
-   policies.
+2. In the dashboard: **SQL Editor → New query**, paste all of
+   [supabase/setup.sql](supabase/setup.sql), and run it. That is the whole
+   backend — seven tables, indexes, row-level security, and the guard trigger.
+
+   > The numbered files (`00-repair`, `schema`, `02-objectives`,
+   > `03-activity-kind`) exist only to bring a project that was set up
+   > incrementally up to date. On a new project, ignore them — `00-repair`
+   > will report that there is nothing to repair.
 
    > Tables are prefixed `chrona_` on purpose. Plain names like `tasks` are
    > common, and `create table if not exists` on an existing name does nothing
    > while still reporting success — which leaves the app talking to unrelated
-   > tables with incompatible types. The schema also ends with a check that
+   > tables with incompatible types. The script also ends with a check that
    > raises an exception rather than failing silently.
 3. Go to **Project Settings → API** and copy the **Project URL** and the
    **anon public** key.
@@ -211,6 +211,17 @@ install, nothing extra in the APK.
 Sync runs automatically in the background, debounced a few seconds after a
 change, on reconnect, and when you return to the app. **Sync now** and
 **Re-download all** are in Settings if you want to force it.
+
+### Moving to a different Supabase project
+
+Point `js/config.js` at the new project, sign up there, then use
+**Settings → Cloud sync → Re-upload everything**.
+
+That last step is not optional. After a successful sync every local record is
+marked clean, so against an empty new project a normal sync pushes nothing and
+reports "Up to date" — the app would look synced while the new project stayed
+empty. Re-upload re-flags every record, tombstones included, so deletions don't
+get resurrected later by another device.
 
 ---
 

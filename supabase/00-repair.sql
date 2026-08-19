@@ -1,46 +1,64 @@
 -- ═══════════════════════════════════════════════════════════════
 -- Chrona — repair script
 --
--- RUN THIS FIRST, before schema.sql.
+-- ⚠️  SETTING UP A NEW PROJECT? SKIP THIS FILE. Run setup.sql instead.
 --
--- The first version of schema.sql used `create table if not exists`
--- with plain names (activities, entries, tasks, habits, checks).
--- This project already had tables with those names, so the CREATEs
--- silently did nothing — but the policies and triggers were still
--- applied on top of those pre-existing tables, which breaks writes
--- to them with:
+-- This only matters for one specific situation: a project where an
+-- early version of schema.sql was run. That version used
+-- `create table if not exists` with plain names (activities, entries,
+-- tasks, habits, checks). If the project already had tables with those
+-- names, the CREATEs silently did nothing — but the policies and
+-- triggers were still applied on top of those pre-existing tables,
+-- which breaks writes to them with:
 --
 --   operator does not exist: timestamp with time zone > bigint
 --
 -- This script removes only what Chrona added. It does not drop your
 -- tables and does not touch a single row of your data.
+--
+-- Safe to run on a project that never had those tables: every step is
+-- guarded, so it does nothing rather than erroring. (`drop trigger if
+-- exists ... on public.activities` guards the *trigger*, not the
+-- *table* — a missing table would still raise 42P01, hence the
+-- to_regclass checks below.)
 -- ═══════════════════════════════════════════════════════════════
 
--- ── remove the triggers Chrona attached ──────────────────────
-drop trigger if exists set_user_id on public.activities;
-drop trigger if exists set_user_id on public.entries;
-drop trigger if exists set_user_id on public.tasks;
-drop trigger if exists set_user_id on public.habits;
-drop trigger if exists set_user_id on public.checks;
+do $$
+declare
+  t text;
+  legacy text[] := array['activities', 'entries', 'tasks', 'habits', 'checks'];
+  touched int := 0;
+begin
+  foreach t in array legacy loop
+    -- to_regclass returns null instead of raising when the table is absent.
+    if to_regclass('public.' || t) is null then
+      continue;
+    end if;
 
--- ── remove the policies Chrona added ─────────────────────────
-drop policy if exists "own activities" on public.activities;
-drop policy if exists "own entries"    on public.entries;
-drop policy if exists "own tasks"      on public.tasks;
-drop policy if exists "own habits"     on public.habits;
-drop policy if exists "own checks"     on public.checks;
+    touched := touched + 1;
 
--- ── remove the indexes Chrona added ──────────────────────────
-drop index if exists public.activities_sync_idx;
-drop index if exists public.entries_sync_idx;
-drop index if exists public.tasks_sync_idx;
-drop index if exists public.habits_sync_idx;
-drop index if exists public.checks_sync_idx;
-drop index if exists public.entries_day_idx;
-drop index if exists public.checks_day_idx;
-drop index if exists public.checks_one_per_day;
+    execute format('drop trigger if exists set_user_id on public.%I', t);
+    execute format('drop policy if exists %L on public.%I', 'own ' || t, t);
+    -- The very first version used a per-table policy name; later ones
+    -- used a shared name. Drop both spellings.
+    execute format('drop policy if exists %L on public.%I', 'own rows', t);
+    execute format('drop index if exists public.%I', t || '_sync_idx');
+    execute format('drop index if exists public.%I', t || '_day_idx');
+  end loop;
+
+  -- Index names that don't follow the per-table pattern above.
+  execute 'drop index if exists public.checks_one_per_day';
+
+  if touched = 0 then
+    raise notice 'Nothing to repair — none of the legacy tables exist in this project. You can ignore this file.';
+  else
+    raise notice 'Repaired % legacy table(s).', touched;
+  end if;
+end $$;
 
 -- ── remove the function ──────────────────────────────────────
+-- Safe unconditionally: `if exists` covers a function that was never
+-- created, and `cascade` clears any trigger still bound to it.
 drop function if exists public.chrona_set_user_id() cascade;
 
 -- Note: row level security was enabled on those tables by the old
