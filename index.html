@@ -248,8 +248,46 @@
     </div>
 
     <div class="section">
+      <div class="section-head">
+        <h2 class="section-title">Am I improving?</h2>
+        <span class="section-note" id="compareNote">—</span>
+      </div>
+      <div class="compare" id="compareBlock"></div>
+    </div>
+
+    <div class="section">
+      <h2 class="section-title">Productive vs draining</h2>
+      <div class="splitbar" id="splitBar"></div>
+      <div class="legend" id="splitLegend"></div>
+      <p class="hint" id="splitHint"></p>
+    </div>
+
+    <div class="section">
       <h2 class="section-title">Time by activity</h2>
       <div class="breakdown" id="breakdown"></div>
+    </div>
+
+    <div class="section">
+      <h2 class="section-title">Where the hours went</h2>
+      <div class="list" id="topTasks"></div>
+    </div>
+
+    <div class="section">
+      <h2 class="section-title">When you're at your best</h2>
+      <div class="factgrid" id="patternFacts"></div>
+    </div>
+
+    <div class="section">
+      <h2 class="section-title">What to change</h2>
+      <div class="findings" id="findingsList"></div>
+    </div>
+
+    <div class="section">
+      <div class="section-head">
+        <h2 class="section-title">AI analysis</h2>
+        <button class="link-btn" id="btnAiSettings">Setup</button>
+      </div>
+      <div id="aiPanel"></div>
     </div>
 
     <div class="section">
@@ -304,6 +342,7 @@
 <script src="js/db.js"></script>
 <script src="js/sound.js"></script>
 <script src="js/store.js"></script>
+<script src="js/analyse.js"></script>
 <script src="js/sync.js"></script>
 <script src="js/certificate.js"></script>
 <script src="js/ui.js"></script>

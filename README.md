@@ -57,7 +57,7 @@ the midnight arithmetic, the overlap check and the day totals all at once.
 | **Tasks** | Things to do. Hit ▶ on any task to time your work on it |
 | **Habits** | Either a simple daily check, or *timed* with a minute target |
 | **Goals** | Objectives with a target and a deadline — "Deep work 40h this month". They fill up as you track, and achieved ones are kept |
-| **Insights** | Daily hours, time per activity, and which hours of the day you're actually active |
+| **Insights** | Whether you're improving, where the hours actually went, when you're at your best, and what to change — plus an optional AI read of it |
 
 **Timed habits tick themselves off.** Set "Read — 30 min/day", and once you've
 logged 30 minutes against it, it's marked done automatically.
@@ -71,6 +71,44 @@ wrong.
 The same honesty applies to the badge: if the time behind an achievement is
 later removed or edited down, the achievement is revoked. It was never actually
 earned, and leaving the tick there would be the app lying to you.
+
+### Analysis
+
+Every activity is classified by you as **productive**, **neutral**, or **draining**
+— the app never guesses, because a wrong guess would quietly skew every
+productivity figure derived from it. Insights then answers four questions:
+
+- **Am I improving?** — this window against the one before it, with the movers named.
+- **Where is my time going?** — the productive/draining split and time per task.
+- **When am I at my best?** — peak hour, best *productive* hour (not the same
+  thing), best weekday, typical and longest session.
+- **What to change** — habits slipping, objectives behind pace with the daily
+  rate needed to catch up, lopsided time, and wins worth noticing.
+
+All of it is computed in the browser from your own entries
+([js/analyse.js](js/analyse.js)) — offline, free, and instant. Two rules keep it
+honest: a percentage against a zero baseline reads as "no comparison yet" rather
+than infinite growth, and colour means *"this went the way you'd want"* rather
+than *"this went up"* — so more of a draining activity shows red, not green.
+
+### AI analysis (optional)
+
+Insights can send its **summary** — never your raw history — to a model and ask
+what stands out. The summary is around 1–2 KB, so a run costs a fraction of a cent.
+
+The key never touches this app. It lives in a Supabase Edge Function
+([supabase/functions/analyse/index.ts](supabase/functions/analyse/index.ts))
+which verifies your Supabase session before spending anything, so the URL is not
+an open relay for whoever finds it.
+
+```bash
+supabase functions deploy analyse
+supabase secrets set GROQ_API_KEY=gsk_...
+supabase secrets set GROQ_MODEL=llama-3.3-70b-versatile   # optional
+```
+
+> **Never paste an API key into the app.** Chrona has no field for one and never
+> will. A key that reaches the browser is a key in a public bundle.
 
 ### Cards you can keep
 
@@ -139,8 +177,9 @@ install, nothing extra in the APK.
 2. In the dashboard: **SQL Editor → New query**. Run
    [supabase/00-repair.sql](supabase/00-repair.sql) first *only if you ran an
    earlier version of the schema*, then run
-   [supabase/schema.sql](supabase/schema.sql), then
-   [supabase/02-objectives.sql](supabase/02-objectives.sql). Together these
+   [supabase/schema.sql](supabase/schema.sql),
+   [supabase/02-objectives.sql](supabase/02-objectives.sql), then
+   [supabase/03-activity-kind.sql](supabase/03-activity-kind.sql). Together these
    create the six `chrona_*` tables, the indexes, and the row-level security
    policies.
 
@@ -240,6 +279,7 @@ css/styles.css          the entire visual system
 js/db.js                IndexedDB layer (stores, indexes, export/import)
 js/sound.js             synthesized audio cues (no audio files)
 js/store.js             state, the timer engine, every data operation
+js/analyse.js           the analysis engine — all computed on-device
 js/sync.js              Supabase auth + two-way sync, over plain fetch
 js/certificate.js       objective cards drawn on canvas, exported as PNG
 supabase/schema.sql     tables, indexes, row-level security policies

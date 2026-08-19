@@ -119,6 +119,7 @@
     $('#btnNewTask').addEventListener('click', function () { Views.openTaskForm(null); });
     $('#btnNewHabit').addEventListener('click', function () { Views.openHabitForm(null); });
     $('#btnNewGoal').addEventListener('click', function () { Views.openGoalForm(null); });
+    $('#btnAiSettings').addEventListener('click', Views.openAiSetup);
 
     $$('#goalFilter .seg-btn').forEach(function (b) {
       b.addEventListener('click', function () {

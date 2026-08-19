@@ -20,6 +20,7 @@ var SHELL = [
   './js/db.js',
   './js/sound.js',
   './js/store.js',
+  './js/analyse.js',
   './js/sync.js',
   './js/certificate.js',
   './js/ui.js',

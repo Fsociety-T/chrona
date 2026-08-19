@@ -12,12 +12,19 @@
     '#3fb6e8', '#7dc94b', '#ff8a5c', '#e05fc4', '#5fd0c0'
   ];
 
+  /* `kind` is what makes "where does my time actually go" answerable:
+     productive = time you'd want back if you lost it,
+     neutral    = necessary or restorative, neither win nor waste,
+     draining   = time you'd rather have spent otherwise.
+     It's your call per activity — the app only does the arithmetic. */
+  var KINDS = ['productive', 'neutral', 'draining'];
+
   var DEFAULT_ACTIVITIES = [
-    { name: 'Deep work', color: '#6c8cff', icon: '🎯' },
-    { name: 'Study',     color: '#22c9a8', icon: '📚' },
-    { name: 'Exercise',  color: '#f5a524', icon: '🏃' },
-    { name: 'Rest',      color: '#a97bff', icon: '🌙' },
-    { name: 'Scrolling', color: '#f2557a', icon: '📱' }
+    { name: 'Deep work', color: '#6c8cff', icon: '🎯', kind: 'productive' },
+    { name: 'Study',     color: '#22c9a8', icon: '📚', kind: 'productive' },
+    { name: 'Exercise',  color: '#f5a524', icon: '🏃', kind: 'productive' },
+    { name: 'Rest',      color: '#a97bff', icon: '🌙', kind: 'neutral' },
+    { name: 'Scrolling', color: '#f2557a', icon: '📱', kind: 'draining' }
   ];
 
   /* ── in-memory state ──────────────────────────────────────── */
@@ -113,7 +120,10 @@
 
   function seedActivities() {
     var recs = DEFAULT_ACTIVITIES.map(function (a, i) {
-      return touch({ id: uid(), name: a.name, color: a.color, icon: a.icon, archived: false, order: i });
+      return touch({
+        id: uid(), name: a.name, color: a.color, icon: a.icon,
+        kind: a.kind, archived: false, order: i
+      });
     });
     state.activities = recs;
     return DB.putAll('activities', recs);
@@ -516,7 +526,8 @@
     } else {
       rec = touch({
         id: uid(), name: data.name, color: data.color || PALETTE[state.activities.length % PALETTE.length],
-        icon: data.icon || '•', archived: false, order: state.activities.length
+        icon: data.icon || '•', kind: data.kind || 'neutral',
+        archived: false, order: state.activities.length
       });
       state.activities.push(rec);
     }
@@ -916,7 +927,7 @@
     state: state, on: on, off: off, emit: emit, init: init, reload: reload,
     uid: uid, dayKey: dayKey, todayKey: todayKey, addDays: addDays,
     touch: touch, isLive: isLive,
-    PALETTE: PALETTE,
+    PALETTE: PALETTE, KINDS: KINDS,
 
     start: start, stop: stop, stopAt: stopAt, discardRunning: discardRunning,
     pause: pause, resume: resume, isPaused: isPaused, sessionStart: sessionStart,

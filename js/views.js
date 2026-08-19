@@ -901,8 +901,215 @@
     $('#kpiStreak').textContent = S.trackingStreak();
 
     renderBarChart(series);
+    renderCompare(statsRange);
+    renderSplit(from, to);
     renderBreakdown(from, to, total);
+    renderTopTasks(from, to);
+    renderPatternFacts(from, to);
+    renderFindings(statsRange);
     renderHeatmap(from, to);
+    renderAiPanel();
+  }
+
+  /* ── am I improving? ──────────────────────────────────────── */
+  function renderCompare(days) {
+    var wrap = $('#compareBlock');
+    clear(wrap);
+    var c = Analyse.comparePeriods(days);
+
+    $('#compareNote').textContent = 'vs previous ' + days + ' days';
+
+    /* A percentage against a zero baseline is meaningless, and an
+       arrow against one tracked day is noise dressed as a trend. */
+    var headline;
+    if (c.pct === null) {
+      headline = 'No comparison yet — nothing tracked in the previous ' + days + ' days.';
+    } else if (c.daysTracked < 2) {
+      headline = 'Too few tracked days to call a trend.';
+    } else {
+      var dir = c.delta >= 0 ? 'up' : 'down';
+      headline = Analyse.fmtHours(Math.abs(c.delta)) + ' ' + dir +
+                 ' (' + (c.delta >= 0 ? '+' : '−') + Math.abs(Math.round(c.pct)) + '%)';
+    }
+
+    /* Productive time is the number that answers "am I improving?".
+       Total tracked time going up only means you tracked more — it says
+       nothing about whether the time was worth having, so it is left
+       uncoloured and the productive line carries the verdict. */
+    var prodDelta = c.movers.reduce(function (n, m) {
+      return n + (m.activity.kind === 'productive' ? m.delta : 0);
+    }, 0);
+
+    wrap.appendChild(el('div', { class: 'compare-head' }, [
+      el('span', { class: 'compare-value mono is-flat', text: headline }),
+      el('span', { class: 'compare-sub', text:
+        Analyse.fmtHours(c.now) + ' tracked now · ' + Analyse.fmtHours(c.before) + ' before' })
+    ]));
+
+    if (c.pct !== null && c.daysTracked >= 2) {
+      wrap.appendChild(el('div', { class: 'compare-head', style: 'margin-bottom:10px' }, [
+        el('span', {
+          class: 'compare-value mono ' + moverTone('productive', prodDelta),
+          style: 'font-size:17px',
+          text: (Math.abs(prodDelta) < 60000 ? 'Productive time unchanged'
+                : 'Productive time ' + (prodDelta > 0 ? 'up ' : 'down ') +
+                  Analyse.fmtHours(Math.abs(prodDelta)))
+        })
+      ]));
+    }
+
+    wrap.appendChild(el('div', { class: 'compare-sub', style: 'margin-bottom:12px', text:
+      'Tracked on ' + c.daysTracked + ' of ' + days + ' days (was ' + c.daysTrackedBefore + ').' }));
+
+    c.movers.slice(0, 5).forEach(function (m) {
+      if (!m.now && !m.before) return;
+      var up = m.delta >= 0;
+      wrap.appendChild(el('div', { class: 'mover' }, [
+        el('span', { class: 'legend-dot', style: 'background:' + m.activity.color }),
+        el('span', { class: 'mover-name', text: m.activity.name }),
+        el('span', {
+          class: 'mover-delta mono ' + moverTone(m.activity.kind, m.delta),
+          text: (Math.abs(m.delta) < 60000 ? '±0'
+                : (up ? '+' : '−') + Analyse.fmtHours(Math.abs(m.delta)))
+        })
+      ]));
+    });
+  }
+
+  /* Green means "this went the way you'd want", not "this went up".
+     More of a draining activity is bad news, and colouring it green
+     would make the analysis quietly congratulate you for it. */
+  function moverTone(kind, delta) {
+    if (Math.abs(delta) < 60000) return 'is-flat';
+    if (kind === 'draining') return delta > 0 ? 'is-down' : 'is-up';
+    if (kind === 'productive') return delta > 0 ? 'is-up' : 'is-down';
+    return 'is-flat';   // neutral activities have no better direction
+  }
+
+  /* ── productive vs draining ───────────────────────────────── */
+  var KIND_COLOR = { productive: 'var(--good)', neutral: 'var(--text-mute)', draining: 'var(--bad)' };
+
+  function renderSplit(from, to) {
+    var bar = $('#splitBar');
+    var legend = $('#splitLegend');
+    clear(bar); clear(legend);
+
+    var s = Analyse.split(from, to);
+    if (!s.total) {
+      bar.appendChild(el('div', { class: 'stackbar-empty' }));
+      $('#splitHint').textContent = 'Nothing tracked in this range yet.';
+      return;
+    }
+
+    [['productive', 'Productive'], ['neutral', 'Neutral'], ['draining', 'Draining']]
+      .forEach(function (pair) {
+        var ms = s[pair[0]];
+        if (!ms) return;
+        bar.appendChild(el('div', {
+          class: 'stackbar-seg',
+          style: 'width:' + ((ms / s.total) * 100) + '%;background:' + KIND_COLOR[pair[0]],
+          title: pair[1] + ' — ' + UI.fmtDuration(ms)
+        }));
+        legend.appendChild(el('span', { class: 'legend-item' }, [
+          el('span', { class: 'legend-dot', style: 'background:' + KIND_COLOR[pair[0]] }),
+          el('span', { class: 'legend-name', text: pair[1] }),
+          el('span', { class: 'legend-val', text: UI.fmtDuration(ms) })
+        ]));
+      });
+
+    $('#splitHint').textContent = Math.round(s.productivePct) + '% productive, ' +
+      Math.round(s.drainingPct) + '% draining. Set what counts where in Today → Quick start → Manage.';
+  }
+
+  /* ── where the hours went (per task) ──────────────────────── */
+  function renderTopTasks(from, to) {
+    var wrap = $('#topTasks');
+    clear(wrap);
+    var rows = Analyse.topTasks(from, to, 5);
+
+    if (!rows.length) {
+      wrap.appendChild(el('p', { class: 'hint', text:
+        'No time tracked against a task yet. Hit ▶ on a task to see it here.' }));
+      return;
+    }
+
+    var max = rows[0].ms || 1;
+    rows.forEach(function (r) {
+      var act = S.activityById(r.task.activityId);
+      wrap.appendChild(el('div', { class: 'bd-item' }, [
+        el('div', { class: 'bd-head' }, [
+          el('span', { class: 'bd-name' }, [
+            el('span', { class: 'legend-dot', style: 'background:' + (act ? act.color : 'var(--text-mute)') }),
+            el('span', { class: r.done ? 'is-done' : '', text: r.task.title })
+          ]),
+          el('span', { class: 'bd-val', text: UI.fmtDuration(r.ms) })
+        ]),
+        el('div', { class: 'bd-track' }, [
+          el('div', {
+            class: 'bd-fill',
+            style: 'width:' + ((r.ms / max) * 100) + '%;background:' + (act ? act.color : 'var(--text-dim)')
+          })
+        ])
+      ]));
+    });
+  }
+
+  /* ── when you're at your best ─────────────────────────────── */
+  var WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+  function renderPatternFacts(from, to) {
+    var wrap = $('#patternFacts');
+    clear(wrap);
+    var p = Analyse.patterns(from, to);
+
+    if (!p.sessionCount) {
+      wrap.appendChild(el('p', { class: 'hint', text: 'Track a few sessions and patterns will show up here.' }));
+      return;
+    }
+
+    function fact(label, value, sub) {
+      wrap.appendChild(el('div', { class: 'fact' }, [
+        el('span', { class: 'fact-value mono', text: value }),
+        el('span', { class: 'fact-label', text: label }),
+        sub ? el('span', { class: 'fact-sub', text: sub }) : null
+      ]));
+    }
+
+    fact('Peak hour', hourLabel(p.bestHour), 'most time tracked');
+    if (p.bestProductiveHour !== null) {
+      fact('Best focus hour', hourLabel(p.bestProductiveHour), 'productive time only');
+    }
+    fact('Best day', WEEKDAYS[p.bestWeekday], 'highest daily average');
+    fact('Typical session', UI.fmtDuration(p.medianSession), 'median of ' + p.sessionCount);
+    fact('Longest session', UI.fmtDuration(p.longestSession), 'in this range');
+    fact('Per tracked day', UI.fmtDuration(p.avgPerTrackedDay), 'average');
+  }
+
+  function hourLabel(h) {
+    return String(h).padStart(2, '0') + ':00';
+  }
+
+  /* ── what to change ───────────────────────────────────────── */
+  function renderFindings(days) {
+    var wrap = $('#findingsList');
+    clear(wrap);
+    var items = Analyse.findings(days);
+
+    if (!items.length) {
+      wrap.appendChild(el('p', { class: 'hint', text:
+        'Nothing standing out — habits on track, objectives on pace, no lopsided time.' }));
+      return;
+    }
+
+    items.forEach(function (f) {
+      wrap.appendChild(el('div', { class: 'finding is-' + f.severity }, [
+        el('span', { class: 'finding-mark' }),
+        el('div', { class: 'finding-body' }, [
+          el('div', { class: 'finding-title', text: f.title }),
+          el('div', { class: 'finding-detail', text: f.detail })
+        ])
+      ]));
+    });
   }
 
   function renderBarChart(series) {
@@ -956,6 +1163,183 @@
         el('div', { class: 'bd-track' }, [
           el('div', { class: 'bd-fill', style: 'width:' + ((g.ms / max) * 100) + '%;background:' + g.activity.color })
         ])
+      ]));
+    });
+  }
+
+  /* ── AI analysis ──────────────────────────────────────────── */
+
+  var LS_AI_FN = 'chrona:aiFunction';
+  var lastAnalysis = null;   // kept in memory only — never persisted
+
+  function aiFunctionName() {
+    try { return localStorage.getItem(LS_AI_FN) || 'analyse'; } catch (e) { return 'analyse'; }
+  }
+
+  function aiReady() {
+    return !!(window.Sync && Sync.configured() && Sync.signedIn());
+  }
+
+  function renderAiPanel() {
+    var wrap = $('#aiPanel');
+    if (!wrap) return;
+    clear(wrap);
+
+    if (!aiReady()) {
+      wrap.appendChild(el('p', { class: 'hint', style: 'margin-top:0', text:
+        'Sign in to your Supabase project first — the analysis runs through an edge function there, ' +
+        'so the API key stays on the server instead of in this app.' }));
+      wrap.appendChild(el('button', {
+        class: 'btn btn-ghost', style: 'width:100%;margin-top:12px', text: 'Set up sync',
+        onClick: function () { Views.openAccount(); }
+      }));
+      return;
+    }
+
+    if (lastAnalysis) {
+      wrap.appendChild(renderMarkdown(lastAnalysis.text));
+      wrap.appendChild(el('p', { class: 'hint', text:
+        'Generated ' + UI.fmtTime(lastAnalysis.at) +
+        (lastAnalysis.model ? ' · ' + lastAnalysis.model : '') }));
+    } else {
+      wrap.appendChild(el('p', { class: 'hint', style: 'margin-top:0', text:
+        'Sends a summary of the numbers above — never your raw history — to your Groq function ' +
+        'and asks it what stands out.' }));
+    }
+
+    var btn = el('button', {
+      class: 'btn btn-primary', style: 'width:100%;margin-top:14px',
+      text: lastAnalysis ? 'Analyse again' : 'Analyse my ' + statsRange + ' days',
+      onClick: function () { runAnalysis(btn); }
+    });
+    wrap.appendChild(btn);
+  }
+
+  function runAnalysis(btn) {
+    var original = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Thinking…';
+
+    var summary = Analyse.summarise(statsRange);
+    var url = Sync.state.url + '/functions/v1/' + aiFunctionName();
+
+    fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': Sync.state.anonKey,
+        'Authorization': 'Bearer ' + Sync.state.session.access_token
+      },
+      body: JSON.stringify({ summary: summary })
+    }).then(function (res) {
+      return res.text().then(function (raw) {
+        var data = null;
+        try { data = JSON.parse(raw); } catch (e) { /* non-JSON body */ }
+        if (!res.ok) {
+          // A 404 here almost always means the function isn't deployed,
+          // which is a different fix from a bad key — say which.
+          if (res.status === 404) {
+            throw new Error('No function called "' + aiFunctionName() + '" on your project. Deploy it first.');
+          }
+          throw new Error((data && data.error) || ('Request failed (' + res.status + ')'));
+        }
+        if (!data || !data.text) throw new Error('The function returned no analysis.');
+        return data;
+      });
+    }).then(function (data) {
+      lastAnalysis = { text: data.text, model: data.model, at: Date.now() };
+      renderAiPanel();
+      UI.toast('Analysis ready');
+    }).catch(function (e) {
+      btn.disabled = false;
+      btn.textContent = original;
+      var wrap = $('#aiPanel');
+      var err = el('p', { class: 'hint', style: 'color:var(--bad)', text: e.message || 'Analysis failed' });
+      wrap.insertBefore(err, wrap.firstChild);
+    });
+  }
+
+  /* Just enough Markdown for what the prompt asks the model to produce:
+     ## headings, - bullets, **bold**. Everything else renders as text —
+     built with DOM nodes rather than innerHTML so model output can
+     never inject markup. */
+  function renderMarkdown(md) {
+    var root = el('div', { class: 'md' });
+
+    String(md || '').split('\n').forEach(function (line) {
+      var t = line.trim();
+      if (!t) return;
+
+      if (t.indexOf('## ') === 0) {
+        root.appendChild(el('h4', { class: 'md-h', text: t.slice(3).trim() }));
+        return;
+      }
+      if (t.indexOf('# ') === 0) {
+        root.appendChild(el('h4', { class: 'md-h', text: t.slice(2).trim() }));
+        return;
+      }
+      if (t.indexOf('- ') === 0 || t.indexOf('* ') === 0) {
+        root.appendChild(el('div', { class: 'md-li' }, inlineBold(t.slice(2).trim())));
+        return;
+      }
+      root.appendChild(el('p', { class: 'md-p' }, inlineBold(t)));
+    });
+
+    return root;
+  }
+
+  function inlineBold(text) {
+    var parts = String(text).split(/\*\*/);
+    return parts.map(function (chunk, i) {
+      if (!chunk) return null;
+      return i % 2 ? el('b', { text: chunk }) : document.createTextNode(chunk);
+    }).filter(Boolean);
+  }
+
+  function openAiSetup() {
+    UI.openSheet('AI analysis setup', function (body, close) {
+      body.appendChild(el('p', { class: 'hint', style: 'margin:0 0 14px', text:
+        'The analysis runs in a Supabase Edge Function, so your Groq API key lives in Supabase\'s ' +
+        'secret store — not in this app, not in the repo, and never in your browser.' }));
+
+      body.appendChild(el('label', { class: 'label', text: 'One-time setup' }));
+      var steps = el('div', { class: 'picklist', style: 'margin-bottom:16px' });
+      [
+        ['1', 'Deploy the function', 'supabase functions deploy analyse'],
+        ['2', 'Set your Groq key', 'supabase secrets set GROQ_API_KEY=gsk_...'],
+        ['3', 'Pick a model (optional)', 'supabase secrets set GROQ_MODEL=llama-3.3-70b-versatile']
+      ].forEach(function (s) {
+        steps.appendChild(el('div', { class: 'pick', style: 'cursor:default' }, [
+          el('span', { class: 'pick-icon', text: s[0] }),
+          el('span', {}, [
+            el('div', { class: 'pick-name', text: s[1] }),
+            el('div', { class: 'pick-sub mono', style: 'word-break:break-all', text: s[2] })
+          ])
+        ]));
+      });
+      body.appendChild(steps);
+
+      var fn = el('input', {
+        class: 'input', type: 'text', placeholder: 'analyse', value: aiFunctionName()
+      });
+      body.appendChild(el('div', { class: 'field' }, [
+        el('label', { class: 'label', text: 'Function name' }), fn
+      ]));
+
+      body.appendChild(el('p', { class: 'hint', style: 'margin:-8px 0 0', text:
+        'Never paste an API key into this app. If a screen ever asks you to, that key belongs on the server instead.' }));
+
+      body.appendChild(el('div', { class: 'sheet-actions' }, [
+        el('button', { class: 'btn btn-ghost', text: 'Close', onClick: close }),
+        el('button', {
+          class: 'btn btn-primary', text: 'Save',
+          onClick: function () {
+            try { localStorage.setItem(LS_AI_FN, fn.value.trim() || 'analyse'); } catch (e) {}
+            close();
+            renderAiPanel();
+            UI.toast('Saved');
+          }
+        })
       ]));
     });
   }
@@ -1083,6 +1467,28 @@
       });
       body.appendChild(el('div', { class: 'field' }, [el('label', { class: 'label', text: 'Colour' }), colorWrap]));
 
+      /* How this activity counts in "where did my time go". The app has
+         no business guessing this — only you know whether an hour of it
+         was worth having. */
+      var kind = editing ? (activity.kind || 'neutral') : 'neutral';
+      var kindSeg = el('div', { class: 'seg', style: 'margin-bottom:6px' });
+      [['productive', 'Productive'], ['neutral', 'Neutral'], ['draining', 'Draining']]
+        .forEach(function (pair) {
+          kindSeg.appendChild(el('button', {
+            class: 'seg-btn' + (kind === pair[0] ? ' is-on' : ''),
+            text: pair[1],
+            onClick: function (ev) {
+              kind = pair[0];
+              UI.$$('.seg-btn', kindSeg).forEach(function (b) { b.classList.remove('is-on'); });
+              ev.currentTarget.classList.add('is-on');
+            }
+          }));
+        });
+      body.appendChild(el('label', { class: 'label', text: 'Counts as' }));
+      body.appendChild(kindSeg);
+      body.appendChild(el('p', { class: 'hint', style: 'margin:0 0 6px', text:
+        'Used by Insights to work out how much of your time you actually wanted to spend that way.' }));
+
       var actions = el('div', { class: 'sheet-actions' }, [
         editing ? el('button', {
           class: 'btn btn-danger', text: 'Delete',
@@ -1098,7 +1504,7 @@
           onClick: function () {
             var v = name.value.trim();
             if (!v) { name.focus(); return; }
-            S.saveActivity({ id: editing ? activity.id : null, name: v, color: color, icon: icon })
+            S.saveActivity({ id: editing ? activity.id : null, name: v, color: color, icon: icon, kind: kind })
               .then(function () { close(); UI.toast(editing ? 'Saved' : 'Activity created'); });
           }
         })
@@ -1977,6 +2383,7 @@
     renderGoals: renderGoals, setGoalFilter: setGoalFilter, openGoalForm: openGoalForm,
     openCertificate: openCertificate,
     renderStats: renderStats, setStatsRange: setStatsRange,
+    openAiSetup: openAiSetup, renderAiPanel: renderAiPanel,
     openStartPicker: openStartPicker, openAccount: openAccount,
     openAuthForm: openAuthForm, openConnectForm: openConnectForm,
     openActivityForm: openActivityForm, openActivityManager: openActivityManager,
