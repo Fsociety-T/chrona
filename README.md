@@ -214,10 +214,21 @@ change, on reconnect, and when you return to the app. **Sync now** and
 
 ### Moving to a different Supabase project
 
-Point `js/config.js` at the new project, sign up there, then use
-**Settings → Cloud sync → Re-upload everything**.
+Paste the new URL and anon key into **Settings → Cloud sync → Connect
+Supabase**, create an account there, then use **Settings → Cloud sync →
+Re-upload everything**.
 
-That last step is not optional. After a successful sync every local record is
+Changing the URL signs you out on purpose. A session token is issued by one
+project and means nothing to another, so keeping it would leave the app
+showing you as signed in while every request came back 401 from a project
+that had never seen that token. The stored sync cursor is dropped for the
+same reason — it points into the old project's timeline.
+
+`js/config.js` holds the default for a *fresh* install. Anything entered in
+Settings overrides it, so editing it does not move a browser that has already
+connected somewhere.
+
+The re-upload is not optional. After a successful sync every local record is
 marked clean, so against an empty new project a normal sync pushes nothing and
 reports "Up to date" — the app would look synced while the new project stayed
 empty. Re-upload re-flags every record, tombstones included, so deletions don't

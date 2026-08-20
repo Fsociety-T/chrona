@@ -81,12 +81,28 @@
     if (anonKey.length < 30) {
       return Promise.reject(new Error('That anon key looks too short. Copy the full "anon public" key from Project Settings → API.'));
     }
+    /* A session belongs to the project that issued it. Pointing at a
+       different project has to drop it, or the app sits there looking
+       signed in while every request 401s against a project that never
+       heard of that token. lastSync goes too: it is a cursor into the
+       old project's timeline and means nothing in the new one. */
+    var moved = state.url && state.url !== url;
+
     state.url = url;
     state.anonKey = anonKey;
     try {
       localStorage.setItem(LS.url, url);
       localStorage.setItem(LS.key, anonKey);
     } catch (e) {}
+
+    if (moved) {
+      saveSession(null);
+      state.lastSync = 0;
+      try { localStorage.removeItem(LS.lastSync); } catch (e) {}
+      setStatus('ready', 'Now pointed at a new project. Sign in there, then use Re-upload everything.');
+      return Promise.resolve(state);
+    }
+
     setStatus('ready', 'Connected. Sign in to start syncing.');
     return Promise.resolve(state);
   }
