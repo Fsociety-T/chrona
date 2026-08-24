@@ -1171,6 +1171,7 @@
 
   var LS_AI_FN = 'chrona:aiFunction';
   var lastAnalysis = null;   // kept in memory only — never persisted
+  var lastError = null;
 
   function aiFunctionName() {
     try { return localStorage.getItem(LS_AI_FN) || 'analyse'; } catch (e) { return 'analyse'; }
@@ -1178,6 +1179,86 @@
 
   function aiReady() {
     return !!(window.Sync && Sync.configured() && Sync.signedIn());
+  }
+
+  /* The numbers are the substance of the analysis — the sentences around
+     them are scaffolding. Picking them out of the prose is what makes the
+     panel skimmable: you can find the figure you care about without
+     reading four paragraphs to reach it.
+
+     This only works because durations arrive pre-formatted from
+     js/analyse.js. Raw milliseconds would be unmatchable, and worse, not
+     worth pointing at. */
+  var NUMBERISH = /(\d{1,2}:\d{2}(?:\s?[-–—]\s?\d{1,2}:\d{2})?|[+\-−]?\d+(?:[.,]\d+)?\s?%|\b\d+h(?:\s?\d+m)?\b|\b\d+\s?(?:min|minutes|hours|hrs)\b|\bunder a minute\b|\b\d+ of \d+\b|\b\d+\s?(?:day|days|week|weeks|session|sessions)\b)/gi;
+
+  function decorate(str) {
+    var nodes = [], last = 0, m;
+    NUMBERISH.lastIndex = 0;
+    while ((m = NUMBERISH.exec(str)) !== null) {
+      if (m.index > last) nodes.push(document.createTextNode(str.slice(last, m.index)));
+      nodes.push(el('span', { class: 'md-num', text: m[0] }));
+      last = m.index + m[0].length;
+      if (NUMBERISH.lastIndex === m.index) NUMBERISH.lastIndex++;   // never loop on an empty match
+    }
+    if (last < str.length) nodes.push(document.createTextNode(str.slice(last)));
+    return nodes;
+  }
+
+  /* **bold** on the outside, number highlighting inside it. Built from DOM
+     nodes rather than innerHTML so model output can never inject markup —
+     the same rule the plain renderer has always followed. */
+  function inlineRich(text) {
+    var out = [];
+    String(text).split(/\*\*/).forEach(function (chunk, i) {
+      if (!chunk) return;
+      if (i % 2) out.push(el('b', {}, decorate(chunk)));
+      else decorate(chunk).forEach(function (n) { out.push(n); });
+    });
+    return out;
+  }
+
+  /* The prompt fixes four sections in a fixed order, so each is coloured by
+     position rather than by matching its wording — a model that rephrases a
+     heading still gets the right colour. */
+  function renderMarkdown(md, writing) {
+    var root = el('div', { class: 'md' + (writing ? ' md-writing' : '') });
+    var section = -1;
+
+    String(md || '').split('\n').forEach(function (line) {
+      var t = line.trim();
+      if (!t) return;
+
+      if (t.charAt(0) === '#') {
+        section = Math.min(section + 1, 3);
+        root.appendChild(el('h4', {
+          class: 'md-h', 'data-sec': String(section),
+          text: t.replace(/^#+\s*/, '')
+        }));
+        return;
+      }
+
+      var sec = String(Math.max(section, 0));
+
+      var numbered = t.match(/^(\d{1,2})[.)]\s+/);
+      if (numbered) {
+        root.appendChild(el('div', { class: 'md-li md-li-n', 'data-sec': sec, 'data-n': numbered[1] },
+          inlineRich(t.slice(numbered[0].length))));
+        return;
+      }
+
+      if (t.indexOf('- ') === 0 || t.indexOf('* ') === 0) {
+        root.appendChild(el('div', { class: 'md-li', 'data-sec': sec }, inlineRich(t.slice(2).trim())));
+        return;
+      }
+
+      root.appendChild(el('p', { class: 'md-p' }, inlineRich(t)));
+    });
+
+    if (writing) {
+      var tail = root.lastChild || root;
+      tail.appendChild(el('span', { class: 'md-caret' }));
+    }
+    return root;
   }
 
   function renderAiPanel() {
@@ -1196,8 +1277,12 @@
       return;
     }
 
+    if (lastError) {
+      wrap.appendChild(el('p', { class: 'hint', style: 'color:var(--bad);margin-top:0', text: lastError }));
+    }
+
     if (lastAnalysis) {
-      wrap.appendChild(renderMarkdown(lastAnalysis.text));
+      wrap.appendChild(renderMarkdown(lastAnalysis.text, false));
       wrap.appendChild(el('p', { class: 'hint', text:
         'Generated ' + UI.fmtTime(lastAnalysis.at) +
         (lastAnalysis.model ? ' · ' + lastAnalysis.model : '') }));
@@ -1205,10 +1290,9 @@
          retired. That keeps the feature working, but a swap you cannot see
          is a swap you cannot decide about — so say it happened. */
       if (lastAnalysis.note) {
-        wrap.appendChild(el('p', { class: 'hint', style: 'color:var(--warn,var(--muted))',
-          text: lastAnalysis.note }));
+        wrap.appendChild(el('p', { class: 'hint', style: 'color:var(--warn)', text: lastAnalysis.note }));
       }
-    } else {
+    } else if (!lastError) {
       wrap.appendChild(el('p', { class: 'hint', style: 'margin-top:0', text:
         'Sends a summary of the numbers above — never your raw history — to your Groq function ' +
         'and asks it what stands out.' }));
@@ -1217,90 +1301,166 @@
     var btn = el('button', {
       class: 'btn btn-primary', style: 'width:100%;margin-top:14px',
       text: lastAnalysis ? 'Analyse again' : 'Analyse my ' + statsRange + ' days',
-      onClick: function () { runAnalysis(btn); }
+      onClick: function () { runAnalysis(); }
     });
     wrap.appendChild(btn);
   }
 
-  function runAnalysis(btn) {
-    var original = btn.textContent;
-    btn.disabled = true;
-    btn.textContent = 'Thinking…';
+  /* Streaming, rather than a typewriter replayed over finished text. The
+     difference is the wait: tokens are painted as Groq produces them, so
+     the first words land in about a second instead of after the whole
+     analysis is written. Animating an already-complete response would make
+     the wait longer and the motion a lie. */
+  function runAnalysis() {
+    var wrap = $('#aiPanel');
+    if (!wrap) return;
+
+    lastError = null;
+    clear(wrap);
+
+    var host = el('div', { class: 'ai-live' });
+    var status = el('p', { class: 'hint ai-status', text: 'Asking your function…' });
+    wrap.appendChild(host);
+    wrap.appendChild(status);
 
     var summary = Analyse.summarise(statsRange);
     var url = Sync.state.url + '/functions/v1/' + aiFunctionName();
+    var headers = {
+      'Content-Type': 'application/json',
+      'apikey': Sync.state.anonKey,
+      'Authorization': 'Bearer ' + Sync.state.session.access_token
+    };
 
-    fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'apikey': Sync.state.anonKey,
-        'Authorization': 'Bearer ' + Sync.state.session.access_token
-      },
-      body: JSON.stringify({ summary: summary })
-    }).then(function (res) {
-      return res.text().then(function (raw) {
-        var data = null;
-        try { data = JSON.parse(raw); } catch (e) { /* non-JSON body */ }
-        if (!res.ok) {
-          // A 404 here almost always means the function isn't deployed,
-          // which is a different fix from a bad key — say which.
-          if (res.status === 404) {
-            throw new Error('No function called "' + aiFunctionName() + '" on your project. Deploy it first.');
-          }
-          throw new Error((data && data.error) || ('Request failed (' + res.status + ')'));
-        }
-        if (!data || !data.text) throw new Error('The function returned no analysis.');
-        return data;
+    var acc = '', model = null, note = null, queued = false, sawToken = false;
+
+    function paint() {
+      if (queued) return;
+      queued = true;
+      requestAnimationFrame(function () {
+        queued = false;
+        clear(host);
+        host.appendChild(renderMarkdown(acc, true));
       });
-    }).then(function (data) {
-      lastAnalysis = { text: data.text, model: data.model, note: data.note, at: Date.now() };
+    }
+
+    function finish() {
+      if (!acc.trim()) { fail('The function returned no analysis.'); return; }
+      lastAnalysis = { text: acc, model: model, note: note, at: Date.now() };
       renderAiPanel();
       UI.toast('Analysis ready');
+    }
+
+    function fail(msg) {
+      lastError = msg;
+      renderAiPanel();
+    }
+
+    /* A 404 here almost always means the function isn't deployed, which is
+       a different fix from a bad key — say which. */
+    function errorFor(res, body) {
+      if (res.status === 404) {
+        return 'No function called "' + aiFunctionName() + '" on your project. Deploy it first.';
+      }
+      var data = null;
+      try { data = JSON.parse(body); } catch (e) { /* non-JSON body */ }
+      return (data && data.error) || ('Request failed (' + res.status + ')');
+    }
+
+    function readHeaders(res) {
+      model = res.headers.get('X-Chrona-Model') || null;
+      var raw = res.headers.get('X-Chrona-Note');
+      try { note = raw ? decodeURIComponent(raw) : null; } catch (e) { note = raw || null; }
+    }
+
+    function readStream(res) {
+      var reader = res.body.getReader();
+      var decoder = new TextDecoder();
+      var buf = '';
+
+      function step() {
+        return reader.read().then(function (chunk) {
+          if (chunk.done) { finish(); return; }
+
+          buf += decoder.decode(chunk.value, { stream: true });
+          var lines = buf.split('\n');
+          buf = lines.pop();                      // hold the partial line back
+
+          lines.forEach(function (line) {
+            line = line.trim();
+            if (line.indexOf('data:') !== 0) return;   // skip comments and blanks
+            var data = line.slice(5).trim();
+            if (!data || data === '[DONE]') return;
+            try {
+              var d = JSON.parse(data);
+              var piece = d && d.choices && d.choices[0] &&
+                          d.choices[0].delta && d.choices[0].delta.content;
+              if (piece) {
+                if (!sawToken) { sawToken = true; status.textContent = 'Writing…'; }
+                acc += piece;
+                paint();
+              }
+            } catch (e) { /* keep-alive, or a fragment worth ignoring */ }
+          });
+
+          return step();
+        });
+      }
+      return step();
+    }
+
+    /* Used when the browser cannot read a stream, and when one dies before
+       producing a single token. Once text is on screen a broken stream
+       keeps what arrived rather than throwing it away to start over. */
+    function consumeJson(res) {
+      return res.text().then(function (raw) {
+        if (!res.ok) throw new Error(errorFor(res, raw));
+        var data = null;
+        try { data = JSON.parse(raw); } catch (e) { /* non-JSON body */ }
+        if (!data || !data.text) throw new Error('The function returned no analysis.');
+        acc = data.text;
+        model = data.model || model || null;
+        note = data.note || note || null;
+        finish();
+      });
+    }
+
+    function buffered() {
+      status.textContent = 'Thinking…';
+      return fetch(url, {
+        method: 'POST', headers: headers,
+        body: JSON.stringify({ summary: summary })
+      }).then(consumeJson);
+    }
+
+    var canStream = typeof TextDecoder !== 'undefined' && typeof ReadableStream !== 'undefined';
+
+    if (!canStream) {
+      buffered().catch(function (e) { fail(e.message || 'Analysis failed'); });
+      return;
+    }
+
+    fetch(url, {
+      method: 'POST', headers: headers,
+      body: JSON.stringify({ summary: summary, stream: true })
+    }).then(function (res) {
+      if (!res.ok) {
+        return res.text().then(function (raw) { throw new Error(errorFor(res, raw)); });
+      }
+      readHeaders(res);
+      var ctype = res.headers.get('Content-Type') || '';
+      if (!res.body || ctype.indexOf('text/event-stream') === -1) return consumeJson(res);
+      return readStream(res);
     }).catch(function (e) {
-      btn.disabled = false;
-      btn.textContent = original;
-      var wrap = $('#aiPanel');
-      var err = el('p', { class: 'hint', style: 'color:var(--bad)', text: e.message || 'Analysis failed' });
-      wrap.insertBefore(err, wrap.firstChild);
+      if (sawToken) { finish(); return; }         // keep what already arrived
+      var msg = e && e.message ? e.message : 'Analysis failed';
+      /* A transport failure deserves one buffered attempt; a refusal from
+         the function itself does not — that would just fail again. */
+      if (/failed to fetch|network|load failed/i.test(msg)) {
+        buffered().catch(function (e2) { fail(e2.message || msg); });
+        return;
+      }
+      fail(msg);
     });
-  }
-
-  /* Just enough Markdown for what the prompt asks the model to produce:
-     ## headings, - bullets, **bold**. Everything else renders as text —
-     built with DOM nodes rather than innerHTML so model output can
-     never inject markup. */
-  function renderMarkdown(md) {
-    var root = el('div', { class: 'md' });
-
-    String(md || '').split('\n').forEach(function (line) {
-      var t = line.trim();
-      if (!t) return;
-
-      if (t.indexOf('## ') === 0) {
-        root.appendChild(el('h4', { class: 'md-h', text: t.slice(3).trim() }));
-        return;
-      }
-      if (t.indexOf('# ') === 0) {
-        root.appendChild(el('h4', { class: 'md-h', text: t.slice(2).trim() }));
-        return;
-      }
-      if (t.indexOf('- ') === 0 || t.indexOf('* ') === 0) {
-        root.appendChild(el('div', { class: 'md-li' }, inlineBold(t.slice(2).trim())));
-        return;
-      }
-      root.appendChild(el('p', { class: 'md-p' }, inlineBold(t)));
-    });
-
-    return root;
-  }
-
-  function inlineBold(text) {
-    var parts = String(text).split(/\*\*/);
-    return parts.map(function (chunk, i) {
-      if (!chunk) return null;
-      return i % 2 ? el('b', { text: chunk }) : document.createTextNode(chunk);
-    }).filter(Boolean);
   }
 
   function openAiSetup() {

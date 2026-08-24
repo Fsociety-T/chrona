@@ -96,6 +96,18 @@ than *"this went up"* — so more of a draining activity shows red, not green.
 Insights can send its **summary** — never your raw history — to a model and ask
 what stands out. The summary is around 1–2 KB, so a run costs a fraction of a cent.
 
+The reply streams: tokens are painted as the model produces them, so the first
+words land in about a second instead of after the whole analysis is written. It
+is a real stream, not a typewriter replayed over finished text — animating a
+completed response would make the wait longer and the motion a lie. A client
+that cannot read a stream, or one whose stream dies before the first token,
+falls back to a single buffered request.
+
+The four sections are coloured by position rather than by matching their
+headings, so a model that rephrases one still lands on the right colour, and
+every figure is picked out of the prose — which only works because durations
+arrive pre-formatted rather than as raw milliseconds.
+
 The key never touches this app. It lives in a Supabase Edge Function
 ([supabase/functions/analyse/index.ts](supabase/functions/analyse/index.ts))
 which verifies your Supabase session before spending anything, so the URL is not

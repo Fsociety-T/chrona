@@ -47,6 +47,7 @@ const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Expose-Headers': 'X-Chrona-Model, X-Chrona-Note',
 };
 
 function json(body: unknown, status = 200) {
@@ -128,7 +129,7 @@ Deno.serve(async (req: Request) => {
   });
   if (!userRes.ok) return json({ error: 'That session is not valid. Sign in again.' }, 401);
 
-  let payload: { summary?: unknown; question?: string };
+  let payload: { summary?: unknown; question?: string; stream?: boolean };
   try {
     payload = await req.json();
   } catch {
@@ -147,10 +148,12 @@ Deno.serve(async (req: Request) => {
     ? `${summaryText}\n\nThe person also asked: ${String(payload.question).slice(0, 500)}`
     : summaryText;
 
-  /* One chat-completion attempt. Split out so the retry below is a second
-     call rather than a second copy of the request. */
-  async function callGroq(model: string) {
-    const res = await fetch(GROQ_URL, {
+  /* One chat-completion attempt. The body is not read here: on the
+     streaming path it has to reach the browser unbuffered, and reading it
+     to check for an error would consume it. Errors arrive as a non-OK
+     status before any tokens flow, so checking res.ok is enough. */
+  function callGroq(model: string, stream: boolean) {
+    return fetch(GROQ_URL, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${groqKey}`,
@@ -158,6 +161,7 @@ Deno.serve(async (req: Request) => {
       },
       body: JSON.stringify({
         model,
+        stream,
         temperature: 0.4,
         max_tokens: 900,
         messages: [
@@ -166,7 +170,6 @@ Deno.serve(async (req: Request) => {
         ],
       }),
     });
-    return { res, raw: await res.text() };
   }
 
   /* Groq's own message is worth keeping — "model not found" and "invalid
@@ -200,40 +203,73 @@ Deno.serve(async (req: Request) => {
     return FALLBACK_ORDER.find((want) => chat.includes(want)) ?? chat[0] ?? null;
   }
 
+  const wantsStream = payload.stream === true;
+
   let model = Deno.env.get('GROQ_MODEL') ?? DEFAULT_MODEL;
   let note: string | null = null;
 
-  let attempt: { res: Response; raw: string };
+  let res: Response;
   try {
-    attempt = await callGroq(model);
+    res = await callGroq(model, wantsStream);
   } catch (e) {
     return json({ error: 'Could not reach Groq: ' + (e as Error).message }, 502);
   }
 
-  if (!attempt.res.ok && modelIsGone(attempt.res.status, groqDetail(attempt.raw))) {
-    const alt = await resolveModel(model);
-    if (alt) {
-      try {
-        attempt = await callGroq(alt);
-        note = `${model} is no longer available on this account, so ${alt} was used instead. Set GROQ_MODEL to choose deliberately.`;
-        model = alt;
-      } catch (e) {
-        return json({ error: 'Could not reach Groq: ' + (e as Error).message }, 502);
+  if (!res.ok) {
+    const raw = await res.text();
+    const detail = groqDetail(raw);
+
+    if (modelIsGone(res.status, detail)) {
+      const alt = await resolveModel(model);
+      if (alt) {
+        try {
+          res = await callGroq(alt, wantsStream);
+          note = `${model} is no longer available on this account, so ${alt} was used instead. Set GROQ_MODEL to choose deliberately.`;
+          model = alt;
+        } catch (e) {
+          return json({ error: 'Could not reach Groq: ' + (e as Error).message }, 502);
+        }
       }
+    }
+
+    if (!res.ok) {
+      const finalRaw = res.bodyUsed ? raw : await res.text();
+      return json({ error: `Groq returned ${res.status}: ${groqDetail(finalRaw)}`, model }, 502);
     }
   }
 
-  if (!attempt.res.ok) {
-    return json({
-      error: `Groq returned ${attempt.res.status}: ${groqDetail(attempt.raw)}`,
-      model,
-    }, 502);
+  /* ── streaming ──
+     Hand Groq's event stream straight to the browser. The point is the
+     wait: the first words land in about a second instead of after the
+     whole analysis is written, which is the difference between watching
+     something happen and staring at a spinner.
+
+     The model and any fallback note travel as headers, since the body is
+     no longer ours to put JSON in. Custom headers are invisible to fetch()
+     across origins unless they are named in Access-Control-Expose-Headers,
+     which is why CORS carries that. The note is percent-encoded: header
+     values are ASCII-only and it contains an em dash. */
+  if (wantsStream && res.body) {
+    return new Response(res.body, {
+      headers: {
+        ...CORS,
+        'Content-Type': 'text/event-stream; charset=utf-8',
+        'Cache-Control': 'no-cache',
+        'X-Chrona-Model': model,
+        'X-Chrona-Note': note ? encodeURIComponent(note) : '',
+      },
+    });
   }
+
+  /* ── buffered ──
+     Still here for clients that cannot read a stream, and as the fallback
+     when one breaks mid-flight. */
+  const raw = await res.text();
 
   let text = '';
   let usage: unknown = null;
   try {
-    const data = JSON.parse(attempt.raw);
+    const data = JSON.parse(raw);
     text = data?.choices?.[0]?.message?.content ?? '';
     usage = data?.usage ?? null;
   } catch {
