@@ -91,6 +91,9 @@
     $('#btnPrimary').addEventListener('click', primaryAction);
     $('#btnStop').addEventListener('click', stopSession);
     $('#btnSwitch').addEventListener('click', Views.openStartPicker);
+    $('#liveBarInfo').addEventListener('click', function () {
+      if (Focus.isOn() && S.state.running) Focus.enter();
+    });
     $('#liveBarPause').addEventListener('click', primaryAction);
     $('#liveBarStop').addEventListener('click', stopSession);
 
@@ -202,6 +205,10 @@
       // Background sync only starts once the store is live, so the first
       // debounced run has real state to push.
       Sync.startAuto();
+
+      // After the store, so a session restored from a reload raises the
+      // focus screen instead of waiting for the next change.
+      Focus.init();
 
       var boot = $('#boot');
       boot.classList.add('is-gone');

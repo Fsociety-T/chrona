@@ -1375,3 +1375,100 @@ body.has-live .app {
     transition-duration: .01ms !important;
   }
 }
+
+/* ── focus screen ─────────────────────────────────────────────
+   Covers everything, nav included. Not a sheet: sheets are dismissed by
+   a tap on the scrim or by Escape, and both are the accidental exit this
+   screen exists to remove. */
+.focus {
+  position: fixed; inset: 0;
+  z-index: 120;                     /* above the sheet scrim and the nav */
+  background: var(--bg);
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: 4px;
+  padding: calc(28px + var(--safe-t)) 24px calc(28px + var(--safe-b));
+  text-align: center;
+  opacity: 0;
+  transition: opacity .22s var(--ease);
+}
+.focus.is-in { opacity: 1; }
+
+/* The activity's own colour, bled in from the top. */
+.focus-glow {
+  position: absolute; inset: 0 0 auto 0; height: 46%;
+  pointer-events: none;
+}
+
+.focus-head { position: relative; display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.focus-icon {
+  width: 62px; height: 62px; border-radius: var(--r-md);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 30px;
+  background: var(--surface-2);
+  box-shadow: var(--clay-out-sm), var(--clay-rim-sm);
+}
+.focus-name { font-size: 20px; font-weight: 800; letter-spacing: -.01em; }
+.focus-sub { margin: 0; text-transform: uppercase; letter-spacing: .1em; font-size: 11px; font-weight: 700; }
+
+.focus-clock {
+  position: relative;
+  margin-top: 18px;
+  font-size: clamp(52px, 17vw, 84px);
+  font-weight: 800; letter-spacing: -.03em;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.focus-since { position: relative; margin: 10px 0 0; }
+
+/* Paused has to be unmistakable — a stopped clock that looks live is the
+   worst thing this screen could show. */
+.focus.is-paused .focus-clock { opacity: .45; }
+.focus.is-paused .focus-sub { color: var(--warn); }
+
+.focus-controls {
+  position: relative;
+  margin-top: 32px;
+  display: flex; gap: 12px; width: 100%; max-width: 340px;
+}
+.focus-btn { flex: 1; height: 54px; font-size: 15px; }
+
+.focus-away {
+  position: relative;
+  margin: 20px 0 0; min-height: 18px;
+  color: var(--warn);
+}
+
+/* Hold to leave: the fill is the timer made visible, so the wait reads as
+   progress rather than as an unresponsive button. */
+.focus-leave {
+  position: absolute;
+  left: 50%; transform: translateX(-50%);
+  bottom: calc(22px + var(--safe-b));
+  border: 0; background: transparent;
+  color: var(--text-mute);
+  font: inherit; font-size: 13px; font-weight: 700;
+  padding: 12px 22px; border-radius: 999px;
+  overflow: hidden; cursor: pointer;
+  -webkit-user-select: none; user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: none;               /* a hold must not scroll the page */
+}
+.focus-leave-fill {
+  position: absolute; inset: 0;
+  width: 0; border-radius: 999px;
+  background: var(--surface-2);
+}
+.focus-leave.is-holding .focus-leave-fill {
+  width: 100%;
+  transition: width .8s linear;     /* matches HOLD_MS in js/focus.js */
+}
+.focus-leave-text { position: relative; }
+
+/* Nothing behind the veil should scroll while it is up. */
+body.is-focused { overflow: hidden; }
+
+@media (prefers-reduced-motion: reduce) {
+  .focus { transition: none; }
+  .focus-leave.is-holding .focus-leave-fill { transition: none; width: 100%; }
+}

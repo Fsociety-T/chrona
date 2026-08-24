@@ -2133,6 +2133,35 @@
       body.appendChild(el('label', { class: 'label', text: 'Theme' }));
       body.appendChild(seg);
 
+      /* ── focus ── */
+      body.appendChild(el('label', { class: 'label', style: 'margin-top:8px', text: 'Focus' }));
+
+      var focusToggle = el('button', {
+        class: 'switch' + (Focus.isOn() ? ' is-on' : ''),
+        'aria-label': 'Toggle focus mode'
+      }, [el('span', { class: 'switch-knob' })]);
+
+      focusToggle.addEventListener('click', function () {
+        var on = !Focus.isOn();
+        Focus.setEnabled(on);
+        focusToggle.classList.toggle('is-on', on);
+      });
+
+      body.appendChild(el('div', { class: 'setting-row' }, [
+        el('div', {}, [
+          el('div', { class: 'setting-name', text: 'Focus mode' }),
+          el('div', { class: 'setting-sub', text:
+            'Starting a timer takes over the screen until you finish, pause, or hold to leave' })
+        ]),
+        focusToggle
+      ]));
+
+      /* Said plainly, because the alternative is someone trusting it to
+         do something no web app can do and being let down mid-session. */
+      body.appendChild(el('p', { class: 'hint', style: 'margin:-2px 0 14px', text:
+        'This covers Chrona only — it cannot lock your phone or block other apps. ' +
+        'It keeps the screen awake and counts the times you leave.' }));
+
       /* ── sound ── */
       body.appendChild(el('label', { class: 'label', style: 'margin-top:8px', text: 'Sound' }));
 

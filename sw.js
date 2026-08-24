@@ -24,6 +24,7 @@ var SHELL = [
   './js/sync.js',
   './js/certificate.js',
   './js/ui.js',
+  './js/focus.js',
   './js/views.js',
   './js/app.js',
   './manifest.webmanifest'

@@ -165,6 +165,26 @@ exported as PNG — no library, no server, no fonts to fetch. It works offline a
 adds nothing to the APK. Long names shrink to fit and long ambitions wrap and
 ellipsise rather than spilling out of the frame.
 
+### Focus mode
+
+Off by default. Turn it on in Settings and starting a timer hands the whole
+screen to one thing: the activity, the clock, and two buttons. Tasks, habits,
+the timeline and the nav are all behind it.
+
+**It cannot lock your phone or block other apps.** No web page can, in any
+browser, and one that claimed otherwise would be lying to you. What it does is
+remove every accidental way out of a session inside Chrona, hold the screen
+awake while it runs, and count the times you left — a number you have to look
+at afterwards does more work than a door you cannot open.
+
+Leaving is a deliberate press-and-hold, not a tap, and Escape is swallowed here
+rather than dismissing it. Leaving is also not stopping: the timer keeps running
+and the live bar takes you back in. Finishing or pausing are done from inside.
+
+A session restored after a reload comes straight back to the focus screen, since
+the decision is made from the running session rather than from what happened to
+raise it in the first place.
+
 ### Sound
 
 Short cues play as you use the app — rising notes on start, falling on stop, a
