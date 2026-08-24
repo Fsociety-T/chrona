@@ -107,6 +107,21 @@ supabase secrets set GROQ_API_KEY=gsk_...
 supabase secrets set GROQ_MODEL=llama-3.3-70b-versatile   # optional
 ```
 
+**No CLI?** `.github/workflows/functions.yml` does the deploy on GitHub's
+servers instead. Add a `SUPABASE_ACCESS_TOKEN` repo secret (from
+<https://supabase.com/dashboard/account/tokens>) and every push that touches
+`supabase/functions/**` redeploys.
+
+It reads the target project out of `js/config.js` rather than taking it as
+configuration, so the function always lands on the project the app actually
+talks to — a function deployed to one project while the app points at another
+is a 404 that looks like a broken feature. After deploying it calls the live
+function once to prove it answers, and says so if `GROQ_API_KEY` is missing.
+
+The secrets still belong in the dashboard (**Edge Functions → Secrets**). They
+are deliberately not set from CI: that would mean a second copy of your Groq
+key living in GitHub.
+
 > **Never paste an API key into the app.** Chrona has no field for one and never
 > will. A key that reaches the browser is a key in a public bundle.
 
