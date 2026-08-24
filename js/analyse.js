@@ -322,6 +322,53 @@
   }
   function fmtNum(n) { return Math.round(n * 10) / 10; }
 
+  /* ── shaping the summary for a reader ─────────────────────── */
+
+  /* Everything below exists because a model reports the numbers it is
+     handed. Give it 951573 and it writes "951,573 ms" — technically the
+     truth, useless to read, and it buries the fact that this is sixteen
+     minutes. None of these values are used for arithmetic downstream, so
+     they are formatted here rather than passed raw and explained later. */
+
+  var WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday',
+                       'Thursday', 'Friday', 'Saturday'];
+
+  function fmtDur(ms) {
+    ms = Math.max(0, Math.round(ms || 0));
+    var mins = Math.round(ms / 60000);
+    if (mins < 1) return ms > 0 ? 'under a minute' : 'none';
+    if (mins < 60) return mins + ' min';
+    var h = Math.floor(mins / 60), m = mins % 60;
+    return m ? h + 'h ' + m + 'm' : h + 'h';
+  }
+
+  function fmtHourSlot(h) {
+    if (h === null || h === undefined || h < 0) return null;
+    var pad = function (n) { return (n < 10 ? '0' : '') + n; };
+    return pad(h) + ':00-' + pad((h + 1) % 24) + ':00';
+  }
+
+  function fmtWeekday(i) {
+    return (i === null || i === undefined || i < 0) ? null : WEEKDAY_NAMES[i];
+  }
+
+  /* A percentage is only meaningful against a baseline worth dividing by.
+     Five minutes last week becoming sixteen this week is not "+17,730%",
+     it is two small numbers — and stating it as a percentage invents a
+     trend out of noise. Below the floor, say what actually happened. */
+  var BASELINE_FLOOR = 15 * 60000;
+
+  function fmtChange(now, before) {
+    if (!before) return 'nothing tracked in the previous window';
+    if (before < BASELINE_FLOOR) {
+      var had = fmtDur(before);
+      return (had === 'under a minute' ? had : 'only ' + had) +
+             ' in the previous window - too little to compare against';
+    }
+    var pct = Math.round(((now - before) / before) * 100);
+    return (pct >= 0 ? '+' : '') + pct + '%';
+  }
+
   /* ── the whole picture, in one object ─────────────────────── */
 
   /* This is also exactly what gets sent to the AI layer — a summary,
@@ -337,19 +384,21 @@
       generatedAt: new Date().toISOString(),
       window: { days: days, from: cur.from, to: cur.to },
 
+      note: 'All durations are already formatted for a reader. Quote them exactly as written.',
+
       totals: {
-        tracked: cmp.now,
-        trackedPrevious: cmp.before,
-        changePct: cmp.pct,
+        tracked: fmtDur(cmp.now),
+        trackedPrevious: fmtDur(cmp.before),
+        change: fmtChange(cmp.now, cmp.before),
         daysTracked: cmp.daysTracked,
         daysInWindow: days,
-        avgPerTrackedDay: pat.avgPerTrackedDay
+        avgPerTrackedDay: fmtDur(pat.avgPerTrackedDay)
       },
 
       split: {
-        productive: sp.productive,
-        neutral: sp.neutral,
-        draining: sp.draining,
+        productive: fmtDur(sp.productive),
+        neutral: fmtDur(sp.neutral),
+        draining: fmtDur(sp.draining),
         productivePct: sp.productivePct,
         drainingPct: sp.drainingPct
       },
@@ -358,24 +407,26 @@
         return {
           name: m.activity.name,
           kind: m.activity.kind || 'neutral',
-          ms: m.now,
-          previousMs: m.before,
-          deltaMs: m.delta
+          time: fmtDur(m.now),
+          previously: fmtDur(m.before),
+          change: fmtChange(m.now, m.before)
         };
       }),
 
       patterns: {
-        bestHour: pat.bestHour,
-        bestProductiveHour: pat.bestProductiveHour,
-        bestWeekday: pat.bestWeekday,
-        weekdayAvgMs: pat.weekdayAvg,
+        busiestHour: fmtHourSlot(pat.bestHour),
+        mostProductiveHour: fmtHourSlot(pat.bestProductiveHour),
+        busiestWeekday: fmtWeekday(pat.bestWeekday),
+        perWeekday: WEEKDAY_NAMES.map(function (name, i) {
+          return { day: name, average: fmtDur((pat.weekdayAvg || [])[i]) };
+        }),
         sessionCount: pat.sessionCount,
-        medianSessionMs: pat.medianSession,
-        longestSessionMs: pat.longestSession
+        typicalSession: fmtDur(pat.medianSession),
+        longestSession: fmtDur(pat.longestSession)
       },
 
       tasks: topTasks(cur.from, cur.to, 5).map(function (t) {
-        return { title: t.task.title, ms: t.ms, done: t.done };
+        return { title: t.task.title, time: fmtDur(t.ms), done: t.done };
       }),
 
       habits: S.state.habits.filter(function (h) { return !h.archived; }).map(function (h) {

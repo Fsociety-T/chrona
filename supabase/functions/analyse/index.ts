@@ -78,6 +78,15 @@ Write four short sections, in this order, with these exact headings:
 
 Rules:
 - Ground every claim in a number from the data, and name it.
+- Durations are already written for a reader ("16 min", "2h 5m"). Quote them
+  exactly as given. Never restate one in milliseconds or any other unit.
+- Use only percentages that appear in the data. Do not derive your own from
+  two numbers. Where a "change" field says there is no usable baseline, that
+  is the finding — report it as such instead of computing a percentage.
+- Attach every number to the thing it belongs to. A window total is not an
+  activity total, and one activity's change is not another's.
+- Never mention a field name from the JSON. Write "your busiest hour is
+  14:00-15:00", not "bestHour = 14".
 - Do not restate the whole dataset back. Pick what matters.
 - Say plainly when the data is too thin to support a conclusion. A
   window with two tracked days cannot show a trend; say so rather than
