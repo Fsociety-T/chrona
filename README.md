@@ -104,8 +104,17 @@ an open relay for whoever finds it.
 ```bash
 supabase functions deploy analyse
 supabase secrets set GROQ_API_KEY=gsk_...
-supabase secrets set GROQ_MODEL=llama-3.3-70b-versatile   # optional
+supabase secrets set GROQ_MODEL=openai/gpt-oss-120b       # optional
 ```
+
+Groq retires models on a schedule, and a retired name comes back as a 404
+that reads like a broken feature rather than a dead model — which is exactly
+what happened to `llama-3.3-70b-versatile` on 2026-08-16.
+
+So the model name is a starting guess, not a dependency. If Groq refuses it,
+the function asks your account what it *can* serve, retries once, and tells
+you in the panel which model it used instead. Setting `GROQ_MODEL` pins one
+and skips the guessing.
 
 **No CLI?** `.github/workflows/functions.yml` does the deploy on GitHub's
 servers instead. Add a `SUPABASE_ACCESS_TOKEN` repo secret (from

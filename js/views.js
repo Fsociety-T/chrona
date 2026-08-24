@@ -1201,6 +1201,13 @@
       wrap.appendChild(el('p', { class: 'hint', text:
         'Generated ' + UI.fmtTime(lastAnalysis.at) +
         (lastAnalysis.model ? ' · ' + lastAnalysis.model : '') }));
+      /* The function silently switches models when the configured one is
+         retired. That keeps the feature working, but a swap you cannot see
+         is a swap you cannot decide about — so say it happened. */
+      if (lastAnalysis.note) {
+        wrap.appendChild(el('p', { class: 'hint', style: 'color:var(--warn,var(--muted))',
+          text: lastAnalysis.note }));
+      }
     } else {
       wrap.appendChild(el('p', { class: 'hint', style: 'margin-top:0', text:
         'Sends a summary of the numbers above — never your raw history — to your Groq function ' +
@@ -1247,7 +1254,7 @@
         return data;
       });
     }).then(function (data) {
-      lastAnalysis = { text: data.text, model: data.model, at: Date.now() };
+      lastAnalysis = { text: data.text, model: data.model, note: data.note, at: Date.now() };
       renderAiPanel();
       UI.toast('Analysis ready');
     }).catch(function (e) {

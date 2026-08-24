@@ -17,9 +17,31 @@
 
 const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
 
-/* Overridable without redeploying: `supabase secrets set GROQ_MODEL=...`
-   Check what your account can serve at https://api.groq.com/openai/v1/models */
-const DEFAULT_MODEL = 'llama-3.3-70b-versatile';
+const MODELS_URL = 'https://api.groq.com/openai/v1/models';
+
+/* Groq retires models on a schedule. llama-3.3-70b-versatile was the
+   default here until it was decommissioned on 2026-08-16, and the feature
+   died with it: Groq answers a retired name with a 404, which surfaces as
+   "the analysis is broken" rather than "that model is gone".
+
+   So the name below is a starting guess, not a dependency. If it is ever
+   refused, the function asks the account what it can actually serve and
+   retries — see resolveModel(). Pin one explicitly to skip all of that:
+     supabase secrets set GROQ_MODEL=... */
+const DEFAULT_MODEL = 'openai/gpt-oss-120b';
+
+/* Preference order when falling back. Anything not listed still gets used
+   if it is all the account has — this only decides which of several. */
+const FALLBACK_ORDER = [
+  'openai/gpt-oss-120b',
+  'openai/gpt-oss-20b',
+  'groq/compound',
+  'groq/compound-mini',
+];
+
+/* The model list also carries speech, embedding and moderation models —
+   none of which can answer a chat completion. */
+const NOT_CHAT = /whisper|tts|embed|guard|moderation/i;
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -116,11 +138,10 @@ Deno.serve(async (req: Request) => {
     ? `${summaryText}\n\nThe person also asked: ${String(payload.question).slice(0, 500)}`
     : summaryText;
 
-  const model = Deno.env.get('GROQ_MODEL') ?? DEFAULT_MODEL;
-
-  let groqRes: Response;
-  try {
-    groqRes = await fetch(GROQ_URL, {
+  /* One chat-completion attempt. Split out so the retry below is a second
+     call rather than a second copy of the request. */
+  async function callGroq(model: string) {
+    const res = await fetch(GROQ_URL, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${groqKey}`,
@@ -136,23 +157,74 @@ Deno.serve(async (req: Request) => {
         ],
       }),
     });
+    return { res, raw: await res.text() };
+  }
+
+  /* Groq's own message is worth keeping — "model not found" and "invalid
+     key" are the two failures you want to read verbatim. */
+  function groqDetail(raw: string) {
+    try { return JSON.parse(raw)?.error?.message ?? raw.slice(0, 400); }
+    catch { return raw.slice(0, 400); }
+  }
+
+  /* A retired model and a bad key both fail the request, but only the
+     first is worth retrying — so match on what Groq says, not on status
+     alone. Retrying a bad key would spend two requests to fail twice. */
+  function modelIsGone(status: number, detail: string) {
+    return status === 404 || /does not exist|decommissioned|deprecat|no longer/i.test(detail);
+  }
+
+  /* Ask the account what it can actually serve. Returns null on any
+     trouble: a failed lookup must not replace Groq's original error,
+     which is more useful than anything this could say instead. */
+  async function resolveModel(exclude: string): Promise<string | null> {
+    let ids: string[] = [];
+    try {
+      const res = await fetch(MODELS_URL, { headers: { Authorization: `Bearer ${groqKey}` } });
+      if (!res.ok) return null;
+      const data = JSON.parse(await res.text())?.data;
+      if (!Array.isArray(data)) return null;
+      ids = data.map((m: { id?: string }) => m?.id).filter((id: unknown): id is string => !!id);
+    } catch { return null; }
+
+    const chat = ids.filter((id) => !NOT_CHAT.test(id) && id !== exclude);
+    return FALLBACK_ORDER.find((want) => chat.includes(want)) ?? chat[0] ?? null;
+  }
+
+  let model = Deno.env.get('GROQ_MODEL') ?? DEFAULT_MODEL;
+  let note: string | null = null;
+
+  let attempt: { res: Response; raw: string };
+  try {
+    attempt = await callGroq(model);
   } catch (e) {
     return json({ error: 'Could not reach Groq: ' + (e as Error).message }, 502);
   }
 
-  const raw = await groqRes.text();
-  if (!groqRes.ok) {
-    // Surface Groq's own message — "model not found" and "invalid key"
-    // are the two failures worth seeing verbatim while setting this up.
-    let detail = raw.slice(0, 400);
-    try { detail = JSON.parse(raw)?.error?.message ?? detail; } catch { /* keep raw */ }
-    return json({ error: `Groq returned ${groqRes.status}: ${detail}`, model }, 502);
+  if (!attempt.res.ok && modelIsGone(attempt.res.status, groqDetail(attempt.raw))) {
+    const alt = await resolveModel(model);
+    if (alt) {
+      try {
+        attempt = await callGroq(alt);
+        note = `${model} is no longer available on this account, so ${alt} was used instead. Set GROQ_MODEL to choose deliberately.`;
+        model = alt;
+      } catch (e) {
+        return json({ error: 'Could not reach Groq: ' + (e as Error).message }, 502);
+      }
+    }
+  }
+
+  if (!attempt.res.ok) {
+    return json({
+      error: `Groq returned ${attempt.res.status}: ${groqDetail(attempt.raw)}`,
+      model,
+    }, 502);
   }
 
   let text = '';
   let usage: unknown = null;
   try {
-    const data = JSON.parse(raw);
+    const data = JSON.parse(attempt.raw);
     text = data?.choices?.[0]?.message?.content ?? '';
     usage = data?.usage ?? null;
   } catch {
@@ -161,5 +233,5 @@ Deno.serve(async (req: Request) => {
 
   if (!text.trim()) return json({ error: 'Groq returned an empty analysis.', model }, 502);
 
-  return json({ text, model, usage });
+  return json({ text, model, usage, note });
 });
