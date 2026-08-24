@@ -181,6 +181,16 @@ Leaving is a deliberate press-and-hold, not a tap, and Escape is swallowed here
 rather than dismissing it. Leaving is also not stopping: the timer keeps running
 and the live bar takes you back in. Finishing or pausing are done from inside.
 
+The objectives the current activity feeds are shown under the clock, so the bar
+moving is visible while you sit through the session rather than waiting on the
+Goals screen behind the veil. Only objectives this activity counts towards, at
+most three, activity-specific ones first.
+
+An hours objective ticks up live, because objectiveProgress already folds the
+open segment into its total. A sessions objective does not, and should not: a
+session you have not finished is not a session yet, and counting it would let
+the number drop back when a short one is discarded.
+
 A session restored after a reload comes straight back to the focus screen, since
 the decision is made from the running session rather than from what happened to
 raise it in the first place.

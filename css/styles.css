@@ -1472,3 +1472,43 @@ body.is-focused { overflow: hidden; }
   .focus { transition: none; }
   .focus-leave.is-holding .focus-leave-fill { transition: none; width: 100%; }
 }
+
+/* Objectives on the focus screen. Deliberately quiet: the clock is the
+   subject, these are the reason to keep sitting there. */
+.focus-goals {
+  position: relative;
+  width: 100%; max-width: 340px;
+  margin: 26px 0 0;
+  display: flex; flex-direction: column; gap: 12px;
+}
+.focus-goal { text-align: left; }
+.focus-goal-top {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+  margin-bottom: 6px;
+}
+.focus-goal-name {
+  font-size: 12.5px; font-weight: 700; color: var(--text-dim);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.focus-goal-val {
+  font-size: 12px; font-weight: 700; color: var(--text-mute);
+  font-variant-numeric: tabular-nums; flex: none;
+}
+.focus-goal-val.is-done { color: var(--good); }
+.focus-goal-track {
+  height: 6px; border-radius: 999px;
+  background: var(--groove);
+  box-shadow: var(--clay-in);
+  overflow: hidden;
+}
+.focus-goal-fill {
+  display: block; height: 100%; width: 0;
+  border-radius: 999px;
+  background: var(--text-dim);
+  transition: width .6s var(--ease);
+}
+.focus-goal-fill.is-done { background: var(--good); }
+
+@media (prefers-reduced-motion: reduce) {
+  .focus-goal-fill { transition: none; }
+}

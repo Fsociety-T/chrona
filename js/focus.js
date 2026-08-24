@@ -109,6 +109,7 @@
     }));
     node.appendChild(controls);
 
+    node.appendChild(el('div', { class: 'focus-goals', id: 'focusGoals' }));
     node.appendChild(el('div', { class: 'focus-away hint', id: 'focusAway' }));
 
     /* Leaving is a hold rather than a tap. The whole point of the screen
@@ -150,6 +151,75 @@
     button.addEventListener('pointercancel', cancel);
   }
 
+  /* ── objectives this session is feeding ───────────────────────
+     Watching the bar move is most of the reason to sit through a long
+     session, so the objectives the current activity counts towards are
+     shown here rather than left on the Goals screen behind the veil.
+
+     Store.objectiveProgress already folds the open segment into an hours
+     total, so these tick up on their own every second. A sessions
+     objective deliberately does not: a session you have not finished is
+     not a session yet, and counting it would let the number go back down
+     when a sub-five-second blip is discarded. */
+
+  var goalRows = {};      // objective id -> the nodes to update
+  var goalKey = '';       // which set of objectives is currently built
+
+  function relevantObjectives(r) {
+    if (!r) return [];
+    return Store.objectivesFor('active').filter(function (o) {
+      return !o.activityId || o.activityId === r.activityId;
+    }).sort(function (a, b) {
+      // The ones tied to this exact activity first — they are the ones
+      // actually moving while you sit here.
+      return (b.activityId ? 1 : 0) - (a.activityId ? 1 : 0);
+    }).slice(0, 3);        // a focus screen that lists everything is not one
+  }
+
+  function fmtValue(o, p) {
+    if (o.metric === 'sessions') return Math.round(p.value) + ' / ' + p.target;
+    return UI.fmtDuration(p.value * 3600000) + ' / ' + p.target + 'h';
+  }
+
+  function paintGoals(r) {
+    if (!veil) return;
+    var host = veil.querySelector('#focusGoals');
+    if (!host) return;
+
+    var list = relevantObjectives(r);
+    var key = list.map(function (o) { return o.id; }).join(',');
+
+    // Rebuild only when the set changes — otherwise a per-second repaint
+    // would throw away and recreate every node under the clock.
+    if (key !== goalKey) {
+      goalKey = key;
+      goalRows = {};
+      clear(host);
+      list.forEach(function (o) {
+        var value = el('span', { class: 'focus-goal-val mono' });
+        var fill = el('span', { class: 'focus-goal-fill' });
+        host.appendChild(el('div', { class: 'focus-goal' }, [
+          el('div', { class: 'focus-goal-top' }, [
+            el('span', { class: 'focus-goal-name', text: o.title }),
+            value
+          ]),
+          el('div', { class: 'focus-goal-track' }, [fill])
+        ]));
+        goalRows[o.id] = { value: value, fill: fill };
+      });
+    }
+
+    list.forEach(function (o) {
+      var row = goalRows[o.id];
+      if (!row) return;
+      var p = Store.objectiveProgress(o);
+      row.value.textContent = fmtValue(o, p);
+      row.fill.style.width = p.pct + '%';
+      row.fill.classList.toggle('is-done', !!p.done);
+      row.value.classList.toggle('is-done', !!p.done);
+    });
+  }
+
   /* ── painting ─────────────────────────────────────────────── */
 
   function paint() {
@@ -160,8 +230,8 @@
     var act = activityFor(r);
     var paused = Store.isPaused();
 
-    var icon = document.getElementById('focusIcon');
-    var glow = document.getElementById('focusGlow');
+    var icon = veil.querySelector('#focusIcon');
+    var glow = veil.querySelector('#focusGlow');
     icon.textContent = act ? (act.icon || '⏱') : '⏱';
     if (act && act.color) {
       icon.style.background = UI.hexToRgba(act.color, .16);
@@ -176,17 +246,19 @@
        the same words twice. */
     var label = Store.runningLabel();
     var sub = act && act.name && act.name !== label ? act.name : 'Tracking';
-    document.getElementById('focusSub').textContent = paused ? 'Paused' : sub;
-    document.getElementById('focusName').textContent = label;
+    veil.querySelector('#focusSub').textContent = paused ? 'Paused' : sub;
+    veil.querySelector('#focusName').textContent = label;
 
-    document.getElementById('focusClock').textContent = UI.fmtClock(Store.elapsed());
-    document.getElementById('focusSince').textContent =
+    veil.querySelector('#focusClock').textContent = UI.fmtClock(Store.elapsed());
+    veil.querySelector('#focusSince').textContent =
       'Started ' + UI.fmtTime(Store.sessionStart());
 
-    document.getElementById('focusPause').textContent = paused ? 'Resume' : 'Pause';
+    veil.querySelector('#focusPause').textContent = paused ? 'Resume' : 'Pause';
     veil.classList.toggle('is-paused', paused);
 
-    var away = document.getElementById('focusAway');
+    paintGoals(r);
+
+    var away = veil.querySelector('#focusAway');
     away.textContent = awayCount
       ? 'You left the app ' + awayCount + (awayCount === 1 ? ' time' : ' times')
       : '';
@@ -196,6 +268,10 @@
 
   function show() {
     if (veil) { paint(); return; }
+
+    // A new veil means the cached rows point at nodes that are leaving.
+    goalKey = '';
+    goalRows = {};
 
     veil = build();
     document.body.appendChild(veil);
@@ -213,6 +289,9 @@
     if (ticker) { clearInterval(ticker); ticker = null; }
     dropWakeLock();
     document.body.classList.remove('is-focused');
+
+    goalKey = '';
+    goalRows = {};
 
     if (!veil) return;
     var node = veil;
