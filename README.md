@@ -85,6 +85,28 @@ productivity figure derived from it. Insights then answers four questions:
 - **What to change** — habits slipping, objectives behind pace with the daily
   rate needed to catch up, lopsided time, and wins worth noticing.
 
+**How much of the day is recorded.** Every split and percentage on the Insights
+screen describes the part of the day you actually tracked. A coverage strip under
+the tiles says how big that part is — *"3h 20m of a 16h day"* — because *"100%
+productive"* over three hours of sixteen is true and says almost nothing. Set your
+day length in **Settings → Day length**; sleep is excluded, so it is not counted
+against you.
+
+**Focus quality** measures the shape of the time rather than its size. Four hours
+in two sittings and four hours in fourteen are identical everywhere else in the
+app: longest unbroken block, how much productive time came in blocks of 45
+minutes or more, blocks per productive hour, activity switches a day, and the
+median clock time your day starts.
+
+These are computed on *blocks*, not entries. Pausing writes the open segment and
+starts a new one, so one session with a coffee break is stored as two entries —
+counting entries would measure how often you pause rather than how long you
+focus. Consecutive entries on the same activity less than three minutes apart are
+merged back into one block.
+
+Anything with nothing to divide by reports absence rather than zero. "No
+productive time yet" and "0%" look identical on a chart and mean opposite things.
+
 **Suggesting the kinds.** Activities → *Suggest kinds with AI* asks a model to
 label each one, and shows you what it proposes: the current kind, the suggested
 one, and a one-line reason. It applies nothing until you press Apply, and rows

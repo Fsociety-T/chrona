@@ -905,6 +905,8 @@
     renderSplit(from, to);
     renderBreakdown(from, to, total);
     renderTopTasks(from, to);
+    renderCoverage(from, to);
+    renderFocusFacts(from, to);
     renderPatternFacts(from, to);
     renderFindings(statsRange);
     renderHeatmap(from, to);
@@ -1056,6 +1058,82 @@
 
   /* ── when you're at your best ─────────────────────────────── */
   var WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+  /* ── how much of the day is even recorded ─────────────────────
+     Every split and percentage on this screen describes the recorded
+     part of the day. Without saying how big that part is, "100%
+     productive" reads as a complete account of the day when it may
+     cover three hours of sixteen. */
+  function renderCoverage(from, to) {
+    var strip = $('#coverageStrip');
+    if (!strip) return;
+
+    var c = Analyse.coverage(from, to);
+    if (!c.daysTracked) { strip.hidden = true; return; }
+    strip.hidden = false;
+
+    $('#coverageLabel').textContent =
+      UI.fmtDuration(c.trackedPerDay) + ' of a ' + c.wakingHours + 'h day';
+    $('#coveragePct').textContent = Math.round(c.perTrackedDayPct) + '%';
+    $('#coverageFill').style.width = c.perTrackedDayPct + '%';
+
+    $('#coverageHint').textContent = c.overFull
+      ? 'More is tracked than your day length allows — check Settings → Day length.'
+      : UI.fmtDuration(c.unaccounted) + ' unrecorded on the days you tracked. ' +
+        'Everything below describes the recorded part.';
+  }
+
+  /* ── the shape of the time ────────────────────────────────────
+     Four hours in two sittings and four hours in fourteen are the same
+     number everywhere else on this screen. */
+  function renderFocusFacts(from, to) {
+    var wrap = $('#focusFacts');
+    if (!wrap) return;
+    clear(wrap);
+
+    var f = Analyse.focus(from, to);
+    if (!f.blockCount) {
+      wrap.appendChild(el('p', { class: 'hint', text:
+        'Track a few sessions and the shape of them shows up here.' }));
+      return;
+    }
+
+    function fact(label, value, sub) {
+      wrap.appendChild(el('div', { class: 'fact' }, [
+        el('span', { class: 'fact-value mono', text: value }),
+        el('span', { class: 'fact-label', text: label }),
+        sub ? el('span', { class: 'fact-sub', text: sub }) : null
+      ]));
+    }
+
+    fact('Longest block', UI.fmtDuration(f.longestBlock), 'unbroken');
+
+    /* null means there was nothing to divide by. Printing 0% would read
+       as a bad score rather than an absent one. */
+    if (f.deepWorkPct === null) {
+      fact('Deep work', '—', 'no productive time yet');
+    } else {
+      fact('Deep work', Math.round(f.deepWorkPct) + '%', 'in blocks of 45m+');
+    }
+
+    if (f.blocksPerProductiveHour === null) {
+      fact('Fragmentation', '—', 'nothing to measure');
+    } else {
+      fact('Fragmentation', Analyse.fmtNumShort(f.blocksPerProductiveHour),
+           'blocks per productive hour');
+    }
+
+    if (f.switchesPerDay !== null) {
+      fact('Switches', String(f.switchesPerDay), 'activity changes a day');
+    }
+
+    fact('Typical block', UI.fmtDuration(f.medianBlock), 'median of ' + f.blockCount);
+
+    var r = Analyse.rhythm(from, to);
+    if (r.startsAt !== null) {
+      fact('Day starts', Analyse.fmtClockMin(r.startsAt), 'median first session');
+    }
+  }
 
   function renderPatternFacts(from, to) {
     var wrap = $('#patternFacts');
@@ -2304,6 +2382,31 @@
       });
       body.appendChild(el('label', { class: 'label', text: 'Theme' }));
       body.appendChild(seg);
+
+      /* ── day length ── */
+      /* Insights needs a denominator. Without one, "100% productive" can
+         describe three hours of a sixteen-hour day and sound like an
+         account of the whole thing. A segmented control rather than a
+         number field, so there is no input to validate. */
+      var waking = Analyse.wakingHours();
+      var wakeSeg = el('div', { class: 'seg' });
+      [12, 14, 16, 18].forEach(function (h) {
+        wakeSeg.appendChild(el('button', {
+          class: 'seg-btn' + (waking === h ? ' is-on' : ''),
+          text: h + 'h',
+          onClick: function (ev) {
+            Analyse.setWakingHours(h);
+            UI.$('.seg-btn', wakeSeg).forEach(function (b) { b.classList.remove('is-on'); });
+            ev.currentTarget.classList.add('is-on');
+            Views.renderStats();
+          }
+        }));
+      });
+      body.appendChild(el('label', { class: 'label', style: 'margin-top:8px', text: 'Day length' }));
+      body.appendChild(wakeSeg);
+      body.appendChild(el('p', { class: 'hint', style: 'margin:6px 0 14px', text:
+        'Hours you are usually awake. Insights uses it to say how much of your day ' +
+        'is recorded — sleep is not counted against you.' }));
 
       /* ── focus ── */
       body.appendChild(el('label', { class: 'label', style: 'margin-top:8px', text: 'Focus' }));

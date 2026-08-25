@@ -35,6 +35,14 @@ their own activities), per-activity movement, time-of-day and weekday
 patterns, top tasks, habit completion, active objectives, and findings
 already computed on-device.
 
+It also carries two things the totals cannot show:
+
+- "coverage": how much of the day was recorded at all. Every split and
+  percentage describes only that recorded part.
+- "focus": the shape of the time — longest unbroken block, how much of
+  the productive time came in long blocks, how fragmented it was, and
+  how often the person switched activities.
+
 Write four short sections, in this order, with these exact headings:
 
 ## Am I improving?
@@ -54,6 +62,15 @@ Rules:
 - Never mention a field name from the JSON. Write "your busiest hour is
   14:00-15:00", not "bestHour = 14".
 - Do not restate the whole dataset back. Pick what matters.
+- Before quoting any share of time as productive or draining, say what
+  share of the day was recorded. "80% of a recorded 3h of a 16h day" is
+  the honest form; "80% of your time" is not.
+- Under "Where is my time going?", use the shape as well as the totals.
+  The same hours arriving in two blocks or fourteen is the finding.
+- Treat a fragmentation or switching figure as worth acting on only when
+  there is at least an hour of productive time behind it.
+- Where a focus field says there is nothing to measure, say that plainly
+  rather than reporting it as a zero.
 - Say plainly when the data is too thin to support a conclusion. A
   window with two tracked days cannot show a trend; say so rather than
   inventing one.

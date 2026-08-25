@@ -17,6 +17,36 @@
   function store() { return S || (S = global.Store); }
 
   var HOUR = 3600000;
+  var MIN = 60000;
+
+  /* Pausing writes the open segment and starts a new one, so one session
+     with a coffee break is stored as two entries. Merging them back below
+     this gap is what makes "longest block" mean focus rather than how
+     often you remember to hit pause. Three minutes lets a refill through
+     and keeps a lunch break out. */
+  var GAP_TOLERANCE = 3 * MIN;
+
+  /* Where a block stops being a stretch of work and starts being a real
+     run at something. Arbitrary, but it has to be *some* number, and 45
+     minutes is long enough that fragmenting it is visible. */
+  var DEEP_MIN = 45 * MIN;
+
+  /* How long your day is, for "how much of it did I record". Sleep is
+     excluded, so the figure describes the part you could have tracked. */
+  var DEFAULT_WAKING_HOURS = 16;
+  var LS_WAKING = 'chrona:waking';
+
+  function wakingHours() {
+    var n;
+    try { n = parseInt(localStorage.getItem(LS_WAKING), 10); } catch (e) { /* blocked */ }
+    return n > 0 && n <= 24 ? n : DEFAULT_WAKING_HOURS;
+  }
+
+  function setWakingHours(n) {
+    n = parseInt(n, 10);
+    if (!(n > 0 && n <= 24)) return;
+    try { localStorage.setItem(LS_WAKING, String(n)); } catch (e) { /* blocked */ }
+  }
 
   /* ── helpers ──────────────────────────────────────────────── */
 
@@ -209,6 +239,154 @@
     return s.length % 2 ? s[mid] : Math.round((s[mid - 1] + s[mid]) / 2);
   }
 
+  /* ── 3b. The shape of the time ────────────────────────────────
+
+     Everything above measures how much time went where. None of it can
+     tell four hours in two sittings from four hours in fourteen, which
+     are the same number and completely different days. These do.
+
+     They are all built on blocks rather than entries, because an entry
+     is a segment: pausing ends one and starts another, so counting
+     entries measures how often you pause. */
+
+  /* Consecutive entries on the same activity, separated by less than
+     GAP_TOLERANCE, are one block. */
+  function blocks(fromDay, toDay) {
+    var S = store();
+    var rows = S.entriesInRange(fromDay, toDay)
+      .slice()
+      .sort(function (a, b) { return a.start - b.start; });
+
+    var out = [];
+    rows.forEach(function (e) {
+      var last = out[out.length - 1];
+      if (last && last.activityId === e.activityId && e.start - last.end <= GAP_TOLERANCE) {
+        last.end = Math.max(last.end, e.end);
+        last.ms = last.end - last.start;
+        last.segments++;
+        return;
+      }
+      out.push({
+        activityId: e.activityId,
+        start: e.start,
+        end: e.end,
+        ms: S.durationOf(e),
+        segments: 1
+      });
+    });
+    return out;
+  }
+
+  function isProductive(activityId) {
+    var a = store().activityById(activityId);
+    return !!(a && a.kind === 'productive');
+  }
+
+  function focus(fromDay, toDay) {
+    var S = store();
+    var all = blocks(fromDay, toDay);
+    var prod = all.filter(function (b) { return isProductive(b.activityId); });
+
+    var productiveMs = prod.reduce(function (n, b) { return n + b.ms; }, 0);
+    var deepMs = prod.reduce(function (n, b) { return b.ms >= DEEP_MIN ? n + b.ms : n; }, 0);
+
+    /* Switches are counted per day and taken as a median. A single
+       scattered day would otherwise set the number for the whole window. */
+    var perDay = [];
+    for (var d = fromDay; d <= toDay; d = S.addDays(d, 1)) {
+      var dayBlocks = blocks(d, d);
+      if (!dayBlocks.length) continue;            // untracked days say nothing
+      var switches = 0;
+      for (var i = 1; i < dayBlocks.length; i++) {
+        if (dayBlocks[i].activityId !== dayBlocks[i - 1].activityId) switches++;
+      }
+      perDay.push(switches);
+    }
+
+    return {
+      blockCount: all.length,
+      medianBlock: medianOf(all.map(function (b) { return b.ms; })),
+      longestBlock: all.length ? Math.max.apply(null, all.map(function (b) { return b.ms; })) : 0,
+
+      productiveMs: productiveMs,
+      productiveBlocks: prod.length,
+      longestProductiveBlock: prod.length ? Math.max.apply(null, prod.map(function (b) { return b.ms; })) : 0,
+
+      /* null rather than 0 when there is nothing to divide by. Zero reads
+         as "you did badly"; absent reads as "nothing to say yet", which is
+         the truth and the same rule the baseline floor follows. */
+      deepWorkPct: productiveMs > 0 ? (deepMs / productiveMs) * 100 : null,
+      blocksPerProductiveHour: productiveMs > 0
+        ? prod.length / (productiveMs / HOUR)
+        : null,
+      switchesPerDay: perDay.length ? medianOf(perDay) : null
+    };
+  }
+
+  /* When the day actually begins and ends, as minutes from midnight.
+     Median, so one 04:00 start does not redefine your mornings. */
+  function rhythm(fromDay, toDay) {
+    var S = store();
+    var firsts = [], lasts = [];
+
+    for (var d = fromDay; d <= toDay; d = S.addDays(d, 1)) {
+      var rows = S.entriesForDay(d);
+      if (!rows.length) continue;
+
+      var bounds = rows.reduce(function (acc, e) {
+        return { start: Math.min(acc.start, e.start), end: Math.max(acc.end, e.end) };
+      }, { start: Infinity, end: -Infinity });
+
+      firsts.push(minutesInto(bounds.start, d));
+      lasts.push(minutesInto(bounds.end, d));
+    }
+
+    return {
+      startsAt: firsts.length ? Math.round(medianOf(firsts)) : null,
+      endsAt: lasts.length ? Math.round(medianOf(lasts)) : null,
+      days: firsts.length
+    };
+  }
+
+  /* Minutes from that day's midnight. A session running past midnight is
+     clamped to the end of the day rather than wrapping to a small number,
+     which would read as an absurdly early finish. */
+  function minutesInto(ts, day) {
+    var midnight = new Date(day + 'T00:00:00').getTime();
+    return Math.max(0, Math.min(24 * 60, Math.round((ts - midnight) / MIN)));
+  }
+
+  /* ── 3c. How much of the day is even recorded? ────────────────
+
+     Without this, "100% productive" can describe three hours of a
+     sixteen-hour day and sound like a complete account of it. */
+  function coverage(fromDay, toDay) {
+    var S = store();
+    var waking = wakingHours();
+    var dayMs = waking * HOUR;
+
+    var tracked = countTrackedDays(fromDay, toDay);
+    var total = totalIn(fromDay, toDay);
+    var perDay = tracked ? total / tracked : 0;
+    var windowDays = S.daysBetween(fromDay, toDay) + 1;
+
+    var raw = dayMs ? (perDay / dayMs) * 100 : 0;
+
+    return {
+      wakingHours: waking,
+      trackedPerDay: perDay,
+      unaccounted: Math.max(0, dayMs - perDay),
+      /* Tracking sleep as an activity legitimately pushes this past the
+         waking day, so cap it and flag it rather than printing 130%,
+         which looks like arithmetic gone wrong. */
+      perTrackedDayPct: Math.min(100, raw),
+      overFull: raw > 100,
+      windowPct: windowDays && dayMs ? Math.min(100, (total / (windowDays * dayMs)) * 100) : 0,
+      daysTracked: tracked,
+      daysInWindow: windowDays
+    };
+  }
+
   /* ── 4. What should I change? ─────────────────────────────── */
 
   /* Findings, most actionable first. Each carries a severity so the UI
@@ -281,6 +459,44 @@
       });
     }
 
+    /* Productive time arriving in scraps. Gated on there being enough of
+       it to have a shape at all — three blocks in twenty minutes is not a
+       fragmentation problem, it is a short day. */
+    var fq = focus(cur.from, cur.to);
+    if (fq.blocksPerProductiveHour !== null && fq.blocksPerProductiveHour >= 3 && fq.productiveMs >= HOUR) {
+      out.push({
+        severity: 'medium',
+        kind: 'fragmented',
+        title: 'Your productive time arrives in pieces',
+        detail: fq.productiveBlocks + ' separate blocks across ' + fmtHours(fq.productiveMs) +
+                ' — about ' + fmtNum(fq.blocksPerProductiveHour) + ' an hour. Longest unbroken stretch was ' +
+                fmtHours(fq.longestProductiveBlock) + '.'
+      });
+    }
+
+    /* A win worth naming: long stretches are the hard part. */
+    if (fq.deepWorkPct !== null && fq.deepWorkPct >= 60 && fq.productiveMs >= HOUR) {
+      out.push({
+        severity: 'good',
+        kind: 'deep-work',
+        title: Math.round(fq.deepWorkPct) + '% of your productive time came in long blocks',
+        detail: 'Blocks of 45 minutes or more. Longest was ' + fmtHours(fq.longestProductiveBlock) + '.'
+      });
+    }
+
+    /* Scope, not failure. Every percentage above describes only the part
+       of the day that was recorded, and this says how big that part is. */
+    var cov = coverage(cur.from, cur.to);
+    if (cov.daysTracked > 0 && cov.perTrackedDayPct < 25) {
+      out.push({
+        severity: 'low',
+        kind: 'low-coverage',
+        title: 'Only ' + Math.round(cov.perTrackedDayPct) + '% of your day is recorded',
+        detail: fmtHours(cov.trackedPerDay) + ' of a ' + cov.wakingHours + 'h day on the days you tracked. ' +
+                'The splits above describe that part, not the whole day.'
+      });
+    }
+
     /* Consistency — showing up matters more than any single big day. */
     if (cmp.daysTracked && cmp.daysTracked < Math.ceil(days * 0.5)) {
       out.push({
@@ -342,6 +558,13 @@
     return m ? h + 'h ' + m + 'm' : h + 'h';
   }
 
+  /* Minutes from midnight → "14:10". */
+  function fmtClockMin(min) {
+    if (min === null || min === undefined) return null;
+    var h = Math.floor(min / 60) % 24, m = Math.round(min % 60);
+    return (h < 10 ? '0' : '') + h + ':' + (m < 10 ? '0' : '') + m;
+  }
+
   function fmtHourSlot(h) {
     if (h === null || h === undefined || h < 0) return null;
     var pad = function (n) { return (n < 10 ? '0' : '') + n; };
@@ -379,6 +602,9 @@
     var cur = cmp.current;
     var sp = split(cur.from, cur.to);
     var pat = patterns(cur.from, cur.to);
+    var fq = focus(cur.from, cur.to);
+    var rhy = rhythm(cur.from, cur.to);
+    var cov = coverage(cur.from, cur.to);
 
     return {
       generatedAt: new Date().toISOString(),
@@ -413,6 +639,41 @@
         };
       }),
 
+      /* How much of the day these numbers actually describe. Without it a
+         model can report "100% productive" as though it covered the day,
+         when it may cover three hours of sixteen. */
+      coverage: {
+        dayLength: cov.wakingHours + 'h',
+        recordedPerTrackedDay: fmtDur(cov.trackedPerDay),
+        unrecordedPerTrackedDay: fmtDur(cov.unaccounted),
+        shareOfDayRecorded: Math.round(cov.perTrackedDayPct) + '%',
+        note: cov.overFull
+          ? 'More time is tracked than the stated day length, so the share is capped at 100%.'
+          : 'Every split and percentage below describes only the recorded part of the day.'
+      },
+
+      /* The shape of the time, which the totals cannot show. */
+      focus: {
+        longestUnbrokenBlock: fmtDur(fq.longestBlock),
+        longestProductiveBlock: fmtDur(fq.longestProductiveBlock),
+        typicalBlock: fmtDur(fq.medianBlock),
+        blockCount: fq.blockCount,
+        productiveInLongBlocks: fq.deepWorkPct === null
+          ? 'no productive time in this window'
+          : Math.round(fq.deepWorkPct) + '% of productive time came in blocks of 45 min or more',
+        fragmentation: fq.blocksPerProductiveHour === null
+          ? 'no productive time to measure'
+          : fmtNum(fq.blocksPerProductiveHour) + ' separate blocks per productive hour',
+        activitySwitchesPerDay: fq.switchesPerDay === null ? 'nothing tracked' : fq.switchesPerDay,
+        note: 'A block is continuous work on one activity; pausing briefly does not split it.'
+      },
+
+      rhythm: {
+        dayUsuallyStarts: fmtClockMin(rhy.startsAt) || 'nothing tracked',
+        dayUsuallyEnds: fmtClockMin(rhy.endsAt) || 'nothing tracked',
+        basedOnDays: rhy.days
+      },
+
       patterns: {
         busiestHour: fmtHourSlot(pat.bestHour),
         mostProductiveHour: fmtHourSlot(pat.bestProductiveHour),
@@ -420,9 +681,12 @@
         perWeekday: WEEKDAY_NAMES.map(function (name, i) {
           return { day: name, average: fmtDur((pat.weekdayAvg || [])[i]) };
         }),
-        sessionCount: pat.sessionCount,
-        typicalSession: fmtDur(pat.medianSession),
-        longestSession: fmtDur(pat.longestSession)
+        /* Blocks, not entries. Pausing writes a segment and starts a new
+           one, so entry counts measure how often you pause — a reader who
+           asks about sessions means the uninterrupted stretch. */
+        sessionCount: fq.blockCount,
+        typicalSession: fmtDur(fq.medianBlock),
+        longestSession: fmtDur(fq.longestBlock)
       },
 
       tasks: topTasks(cur.from, cur.to, 5).map(function (t) {
@@ -461,8 +725,12 @@
 
   global.Analyse = {
     comparePeriods: comparePeriods, split: split, patterns: patterns,
+    blocks: blocks, focus: focus, rhythm: rhythm, coverage: coverage,
+    wakingHours: wakingHours, setWakingHours: setWakingHours,
     topTasks: topTasks, findings: findings, summarise: summarise,
     countTrackedDays: countTrackedDays, previousRange: previousRange,
-    fmtHours: fmtHours, medianOf: medianOf, change: change
+    fmtHours: fmtHours, fmtDur: fmtDur, fmtClockMin: fmtClockMin,
+    fmtNumShort: fmtNum,
+    medianOf: medianOf, change: change
   };
 })(window);

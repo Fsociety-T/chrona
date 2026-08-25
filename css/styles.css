@@ -1547,3 +1547,33 @@ body.is-focused { overflow: hidden; }
 .cls-kind.is-draining   { background: color-mix(in srgb, var(--bad) 18%, transparent); color: var(--bad); }
 
 @media (prefers-reduced-motion: reduce) { .cls-row { transition: none; } }
+
+/* ── coverage strip ───────────────────────────────────────────
+   Sits under the tiles because it qualifies every number below it:
+   a split of the recorded day is not a split of the day. */
+.coverage {
+  margin: 14px 0 4px;
+  padding: 13px 15px;
+  border-radius: var(--r-md);
+  background: var(--surface);
+  box-shadow: var(--clay-out-sm), var(--clay-rim-sm);
+}
+.coverage-head {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+  margin-bottom: 9px;
+}
+.coverage-label { font-size: 13.5px; font-weight: 700; }
+.coverage-pct { font-size: 13px; font-weight: 800; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.coverage-track {
+  height: 7px; border-radius: 999px;
+  background: var(--groove); box-shadow: var(--clay-in);
+  overflow: hidden;
+}
+.coverage-fill {
+  display: block; height: 100%; width: 0;
+  border-radius: 999px; background: var(--text-dim);
+  transition: width .5s var(--ease);
+}
+.coverage-hint { margin: 9px 0 0; }
+
+@media (prefers-reduced-motion: reduce) { .coverage-fill { transition: none; } }
