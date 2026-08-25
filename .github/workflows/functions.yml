@@ -70,34 +70,46 @@ jobs:
             supabase functions deploy "$name" --project-ref "${{ steps.cfg.outputs.ref }}"
           done
 
-      # Deploying and *working* are different things. Ask the live function
-      # what it thinks of an anon-key call: it checks GROQ_API_KEY before it
-      # checks the caller, so one request tells us both that the function is
-      # reachable and that the key is present.
-      - name: Check the function actually answers
+      # Deploying and *working* are different things. Ask each live
+      # function what it thinks of an anon-key call: they check
+      # GROQ_API_KEY before they check the caller, so one request per
+      # function tells us both that it is reachable and that the key is
+      # there. Checking only the first would let a broken second one
+      # ship green.
+      - name: Check every function actually answers
         run: |
-          url='${{ steps.cfg.outputs.url }}/functions/v1/analyse'
+          base='${{ steps.cfg.outputs.url }}/functions/v1'
           key='${{ steps.cfg.outputs.key }}'
-          body=$(curl -s -w '\n%{http_code}' -X POST "$url" \
-            -H "apikey: $key" -H "Authorization: Bearer $key" \
-            -H 'Content-Type: application/json' -d '{"summary":{"ci":true}}')
-          code=$(printf '%s' "$body" | tail -n1)
-          text=$(printf '%s' "$body" | sed '$d')
-          echo "HTTP $code — $text"
+          failed=0
 
-          case "$text" in
-            *NOT_FOUND*)
-              echo "::error::The function is not reachable after deploying. Check the job log above."
-              exit 1 ;;
-            *GROQ_API_KEY*)
-              echo "::warning::Deployed, but GROQ_API_KEY is not set on the project. Add it under Edge Functions → Secrets; the analysis will fail until you do."
-              exit 0 ;;
-          esac
+          for dir in supabase/functions/*/; do
+            name=$(basename "$dir")
+            case "$name" in _*) continue ;; esac
 
-          if [ "$code" = "401" ]; then
-            echo "Healthy: the function is live and the Groq key is set."
-            echo "(401 is expected here — an anon key is not a signed-in user.)"
-            exit 0
-          fi
-          echo "::error::Unexpected reply from the deployed function."
-          exit 1
+            body=$(curl -s -w '\n%{http_code}' -X POST "$base/$name" \
+              -H "apikey: $key" -H "Authorization: Bearer $key" \
+              -H 'Content-Type: application/json' -d '{"probe":true}')
+            code=$(printf '%s' "$body" | tail -n1)
+            text=$(printf '%s' "$body" | sed '$d')
+            echo "── $name: HTTP $code — $text"
+
+            case "$text" in
+              *NOT_FOUND*)
+                echo "::error::$name is not reachable after deploying."
+                failed=1; continue ;;
+              *GROQ_API_KEY*)
+                echo "::warning::$name deployed, but GROQ_API_KEY is not set on the project. Add it under Edge Functions → Secrets."
+                continue ;;
+            esac
+
+            # 401 is the expected healthy answer: an anon key is not a
+            # signed-in user, and the key check already passed to get here.
+            if [ "$code" = "401" ]; then
+              echo "   healthy — live, and the Groq key is set."
+            else
+              echo "::error::$name gave an unexpected reply."
+              failed=1
+            fi
+          done
+
+          exit $failed

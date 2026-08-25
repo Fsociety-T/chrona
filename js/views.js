@@ -1697,12 +1697,184 @@
         ]));
       });
       body.appendChild(list);
+      body.appendChild(el('button', {
+        class: 'btn btn-ghost', style: 'width:100%;margin-top:12px',
+        text: '✨ Suggest kinds with AI',
+        onClick: function () { close(); openClassifySheet(); }
+      }));
+
       body.appendChild(el('div', { class: 'sheet-actions' }, [
         el('button', {
           class: 'btn btn-primary', text: '+ New activity',
           onClick: function () { close(); openActivityForm(null); }
         })
       ]));
+    });
+  }
+
+  /* ── AI-suggested kinds ───────────────────────────────────────
+     The kind field feeds every productivity number the app produces, so
+     a wrong one is not a cosmetic mistake — it quietly changes what your
+     week looks like. That is why the app has always made you choose it,
+     and why this proposes rather than applies: the model does the typing,
+     you keep the decision.
+
+     Rows whose suggestion matches what you already had are shown but not
+     selected. There is nothing to apply there, and pre-ticking them would
+     pad the count with changes that change nothing. */
+
+  var CLASSIFY_FN = 'classify';
+
+  function kindLabel(k) {
+    return k ? k.charAt(0).toUpperCase() + k.slice(1) : 'Unset';
+  }
+
+  function openClassifySheet() {
+    if (!aiReady()) {
+      UI.toast('Sign in to your Supabase project first');
+      Views.openAccount();
+      return;
+    }
+
+    var acts = S.state.activities.filter(function (a) { return !a.archived; });
+    if (!acts.length) { UI.toast('No activities to classify'); return; }
+
+    UI.openSheet('Suggest kinds', function (body, close) {
+      var status = el('p', { class: 'hint ai-status', style: 'margin:0 0 14px', text: 'Reading your activities…' });
+      body.appendChild(status);
+
+      var listWrap = el('div');
+      body.appendChild(listWrap);
+
+      var actions = el('div', { class: 'sheet-actions' });
+      body.appendChild(actions);
+
+      var picked = {};        // activity id -> proposed kind, for accepted rows only
+
+      function countPicked() {
+        return Object.keys(picked).length;
+      }
+
+      function fail(msg) {
+        clear(body);
+        body.appendChild(el('p', { class: 'hint', style: 'color:var(--bad);margin-top:0', text: msg }));
+        body.appendChild(el('div', { class: 'sheet-actions' }, [
+          el('button', { class: 'btn btn-ghost', text: 'Close', onClick: close })
+        ]));
+      }
+
+      fetch(Sync.state.url + '/functions/v1/' + CLASSIFY_FN, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': Sync.state.anonKey,
+          'Authorization': 'Bearer ' + Sync.state.session.access_token
+        },
+        body: JSON.stringify({
+          activities: acts.map(function (a) { return { name: a.name }; })
+        })
+      }).then(function (res) {
+        return res.text().then(function (raw) {
+          var data = null;
+          try { data = JSON.parse(raw); } catch (e) { /* non-JSON body */ }
+          if (!res.ok) {
+            if (res.status === 404) {
+              throw new Error('No function called "' + CLASSIFY_FN + '" on your project yet. Push once and the deploy workflow adds it.');
+            }
+            throw new Error((data && data.error) || ('Request failed (' + res.status + ')'));
+          }
+          if (!data || !Array.isArray(data.activities)) throw new Error('The function returned nothing usable.');
+          return data;
+        });
+      }).then(function (data) {
+        status.remove();
+
+        var byName = {};
+        data.activities.forEach(function (r) { byName[r.name] = r; });
+
+        var changes = 0;
+
+        acts.forEach(function (a) {
+          var proposal = byName[a.name];
+          if (!proposal) return;                        // reported as missing below
+
+          var same = proposal.kind === (a.kind || 'neutral');
+          if (!same) { picked[a.id] = proposal.kind; changes++; }
+
+          var badge = el('span', { class: 'cls-kind is-' + proposal.kind, text: kindLabel(proposal.kind) });
+
+          var row = el('button', {
+            class: 'cls-row' + (same ? ' is-same' : ' is-on'),
+            onClick: function () {
+              if (same) return;                          // nothing to apply
+              if (picked[a.id]) { delete picked[a.id]; row.classList.remove('is-on'); }
+              else { picked[a.id] = proposal.kind; row.classList.add('is-on'); }
+              refreshButton();
+            }
+          }, [
+            el('span', { class: 'cls-icon', style: 'background:' + UI.hexToRgba(a.color, .16), text: a.icon }),
+            el('span', { class: 'cls-body' }, [
+              el('span', { class: 'cls-name', text: a.name }),
+              el('span', { class: 'cls-why', text:
+                same ? 'Already ' + kindLabel(proposal.kind).toLowerCase()
+                     : (kindLabel(a.kind || 'neutral') + ' → ' + kindLabel(proposal.kind) +
+                        (proposal.reason ? ' · ' + proposal.reason : '')) })
+            ]),
+            badge
+          ]);
+          listWrap.appendChild(row);
+        });
+
+        if (Array.isArray(data.missing) && data.missing.length) {
+          listWrap.appendChild(el('p', { class: 'hint', style: 'margin:12px 0 0', text:
+            'Not classified: ' + data.missing.join(', ') + '. Set those yourself.' }));
+        }
+
+        if (data.model) {
+          listWrap.appendChild(el('p', { class: 'hint', style: 'margin:12px 0 0', text: 'Suggested by ' + data.model }));
+        }
+        if (data.note) {
+          listWrap.appendChild(el('p', { class: 'hint', style: 'color:var(--warn);margin:6px 0 0', text: data.note }));
+        }
+
+        var apply = el('button', { class: 'btn btn-primary' });
+        var refreshButton = function () {
+          var n = countPicked();
+          apply.textContent = n ? 'Apply ' + n + (n === 1 ? ' change' : ' changes') : 'Nothing to apply';
+          apply.disabled = !n;
+        };
+
+        apply.addEventListener('click', function () {
+          var ids = Object.keys(picked);
+          if (!ids.length) return;
+          apply.disabled = true;
+          apply.textContent = 'Applying…';
+
+          // Saved one at a time so a failure part-way still leaves the
+          // ones that landed, rather than an all-or-nothing guess.
+          ids.reduce(function (chain, id) {
+            return chain.then(function () { return S.saveActivity({ id: id, kind: picked[id] }); });
+          }, Promise.resolve()).then(function () {
+            close();
+            UI.toast(ids.length + (ids.length === 1 ? ' activity updated' : ' activities updated'));
+          }).catch(function (e) {
+            fail(e.message || 'Could not save those.');
+          });
+        });
+
+        actions.appendChild(el('button', { class: 'btn btn-ghost', text: 'Cancel', onClick: close }));
+        actions.appendChild(apply);
+        refreshButton();
+
+        if (!changes) {
+          listWrap.insertBefore(
+            el('p', { class: 'hint', style: 'margin:0 0 12px', text:
+              'Every activity already matches what the model would have chosen.' }),
+            listWrap.firstChild);
+        }
+      }).catch(function (e) {
+        fail(e.message || 'Could not reach your function.');
+      });
     });
   }
 
@@ -2603,6 +2775,7 @@
     openStartPicker: openStartPicker, openAccount: openAccount,
     openAuthForm: openAuthForm, openConnectForm: openConnectForm,
     openActivityForm: openActivityForm, openActivityManager: openActivityManager,
+    openClassifySheet: openClassifySheet,
     openTaskForm: openTaskForm, openHabitForm: openHabitForm,
     openEntryForm: openEntryForm, openSettings: openSettings
   };

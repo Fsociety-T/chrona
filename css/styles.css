@@ -1512,3 +1512,38 @@ body.is-focused { overflow: hidden; }
 @media (prefers-reduced-motion: reduce) {
   .focus-goal-fill { transition: none; }
 }
+
+/* Suggested activity kinds, awaiting a decision. */
+.cls-row {
+  display: flex; align-items: center; gap: 12px; width: 100%;
+  padding: 11px 12px; margin-bottom: 8px;
+  border: 0; border-radius: var(--r-sm);
+  background: var(--surface-2); color: var(--text);
+  font: inherit; text-align: left; cursor: pointer;
+  opacity: .5;
+  transition: opacity .16s var(--ease), box-shadow .16s var(--ease);
+}
+.cls-row.is-on { opacity: 1; box-shadow: var(--clay-out-sm), var(--clay-rim-sm); }
+/* Nothing to decide on a row that already matches, so it does not offer to. */
+.cls-row.is-same { opacity: .42; cursor: default; }
+
+.cls-icon {
+  width: 34px; height: 34px; border-radius: 11px; flex: none;
+  display: flex; align-items: center; justify-content: center; font-size: 17px;
+}
+.cls-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.cls-name { font-size: 14px; font-weight: 700; }
+.cls-why {
+  font-size: 11.5px; color: var(--text-mute); line-height: 1.4;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.cls-kind {
+  flex: none; font-size: 10.5px; font-weight: 800;
+  letter-spacing: .06em; text-transform: uppercase;
+  padding: 4px 8px; border-radius: 999px;
+}
+.cls-kind.is-productive { background: color-mix(in srgb, var(--good) 18%, transparent); color: var(--good); }
+.cls-kind.is-neutral    { background: color-mix(in srgb, var(--text-dim) 18%, transparent); color: var(--text-dim); }
+.cls-kind.is-draining   { background: color-mix(in srgb, var(--bad) 18%, transparent); color: var(--bad); }
+
+@media (prefers-reduced-motion: reduce) { .cls-row { transition: none; } }

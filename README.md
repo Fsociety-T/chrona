@@ -85,6 +85,19 @@ productivity figure derived from it. Insights then answers four questions:
 - **What to change** — habits slipping, objectives behind pace with the daily
   rate needed to catch up, lopsided time, and wins worth noticing.
 
+**Suggesting the kinds.** Activities → *Suggest kinds with AI* asks a model to
+label each one, and shows you what it proposes: the current kind, the suggested
+one, and a one-line reason. It applies nothing until you press Apply, and rows
+it would not change are shown but not selected.
+
+It proposes rather than decides for the same reason the app made you choose in
+the first place. This one field feeds every productivity number here, so a
+wrong value does not look like an error — it looks like a worse week. Anything
+genuinely ambiguous comes back "neutral", and names the model did not answer
+for are listed rather than quietly left alone. The reply is validated against
+the names actually sent and the three kinds that exist, so an invented activity
+or an invented kind is dropped instead of written.
+
 All of it is computed in the browser from your own entries
 ([js/analyse.js](js/analyse.js)) — offline, free, and instant. Two rules keep it
 honest: a percentage against a zero baseline reads as "no comparison yet" rather
